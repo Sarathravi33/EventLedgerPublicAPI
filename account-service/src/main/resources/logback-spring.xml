@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <springProperty scope="context" name="serviceName" source="spring.application.name"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <!--
+              Remapped so field names match IMPLEMENTATION_PLAN.md §10 exactly: "timestamp" and
+              "logger" rather than LogstashEncoder's defaults of "@timestamp"/"logger_name".
+              traceId/spanId need no explicit mapping — Micrometer Tracing puts them in MDC,
+              and LogstashEncoder includes all MDC entries as top-level fields automatically.
+            -->
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <logger>logger</logger>
+            </fieldNames>
+            <customFields>{"service":"${serviceName}"}</customFields>
+            <!--
+              Without this, LogstashEncoder also emits every Logback *context* property
+              (including serviceName above, used only as a substitution variable here) as its
+              own top-level field — a redundant "serviceName" alongside the intentional
+              "service" field.
+            -->
+            <includeContext>false</includeContext>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

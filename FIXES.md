@@ -218,6 +218,22 @@ in the same JVM; the identical traceId appears in *both* services' logs for one 
 the Account Service's "Applied CREDIT transaction" log line, with different span IDs as
 expected).
 
+## Step 9 — Structured logging
+
+**Redundant `serviceName` field leaking into every log line.** `logback-spring.xml` declares
+`<springProperty scope="context" name="serviceName" source="spring.application.name"/>` purely
+as a substitution variable for the `customFields` JSON (`{"service":"${serviceName}"}`).
+Caught immediately during the manual-run visual check this step's `Prompt.md` instructions
+explicitly ask for: real log output showed both `"service":"account-service"` (intentional) and
+a separate `"serviceName":"account-service"` (unintentional) on every line —
+`LogstashEncoder` emits all Logback *context* properties as top-level fields by default, and
+`scope="context"` puts the variable there for exactly that reason (it needs to be readable at
+config-parse time). Fixed by adding `<includeContext>false</includeContext>` to both services'
+encoder config, then re-verified by re-running both services and confirming the field was
+gone. Coverage tests wouldn't have caught this — they construct the encoder directly rather
+than parsing real Logback context properties — which is why the manual-run check the step
+calls for still matters even with an automated test in place.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

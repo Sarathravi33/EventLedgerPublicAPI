@@ -155,6 +155,69 @@ org.eclipse.jetty.server.HttpChannel as super class`. `mvn dependency:tree` show
 `org.wiremock:wiremock-standalone:3.3.1`, which shades its dependencies and avoids the
 transitive conflict entirely; re-ran the full resiliency suite afterward to confirm.
 
+## Step 8 — Distributed tracing
+
+This step involved the longest debugging trail so far — the "no extra code should be required"
+assumption in the original plan turned out to be wrong for this exact dependency combination,
+and it took several rounds of empirical isolation to find out why.
+
+**Plan gap: no application-level log statements existed yet.** Neither service had a single
+`log.info(...)` call anywhere before this step — Steps 1–7 only produced framework-level log
+noise. `Prompt.md`'s Step 9 prompt ("confirm log lines are valid JSON containing... message")
+implicitly assumes meaningful log lines already exist by then; nothing in Steps 1–8 had actually
+scheduled adding them. Caught while designing this step's trace-propagation test, which needs a
+real application log line to assert a traceId against. Fixed by adding `log.info`/`log.warn`
+calls at the meaningful lifecycle points in both `EventService` (Gateway) and `AccountService`
+(Account Service) — received/duplicate/retry/applied/failed — which also directly serves
+requirement #3 ("both services must log the trace ID") and requirement #4 (structured logging
+needs something to structure).
+
+**Bug: the `RestClient` bean bypassed Spring's own instrumented builder.** `AccountServiceClientConfig`
+originally called the static `RestClient.builder()` factory method rather than injecting the
+`RestClient.Builder` bean Spring Boot auto-configures (and decorates with observation/tracing
+customizers). Fixed by taking `RestClient.Builder` as a constructor/method parameter instead.
+This was necessary but, as the next two findings show, not sufficient on its own.
+
+**Investigated and ruled out: thread-hop losing the trace context.** `ResilientAccountServiceClient`
+runs the real HTTP call inside a `CompletableFuture` on a separate executor thread (required by
+`TimeLimiter`), and thread-locals don't cross that boundary automatically. This is a real
+concern in general — fixed by capturing `Context.current()` (OpenTelemetry's own context) before
+the hop and re-activating it (`context.makeCurrent()`) inside the async task — but it was **not
+the actual root cause** of the missing `traceparent` header: a diagnostic call to the raw
+(unwrapped) client on the *same* thread, wrapped in a manually-started `Observation`, still
+produced no header. This ruled the thread-hop theory out and pointed at something more
+fundamental. (The fix is kept regardless — it is independently correct and necessary once the
+real root cause below is also fixed, since the interceptor still needs a current span to read.)
+
+**Root cause: the auto-configured Micrometer `Propagator` bean had zero registered header
+fields.** Every bean Spring Boot's tracing auto-configuration is supposed to create was
+genuinely present — `ObservationRestClientCustomizer`, `PropagatingSenderTracingObservationHandler`,
+a `Propagator` bean, `DefaultTracingObservationHandler`, all confirmed by listing bean
+definitions in a diagnostic test. But calling `propagator.fields()` directly on the injected
+`Propagator` returned an empty list — i.e., it had no W3C (or any) format configured, so
+`propagator.inject(...)` had nothing to set regardless of how correct the surrounding wiring
+was. Tried the documented property `management.tracing.propagation.type: W3C` on both services;
+confirmed via the same diagnostic that it had **no effect** on this object — either the property
+doesn't apply the way expected on this exact Spring Boot 3.2.5 / Micrometer / OTel version
+combination, or something else about the auto-configuration path used here (Boot 3.2's
+`OpenTelemetryPropagationConfigurations` offers both a `PropagationWithBaggage` and a
+`NoPropagation` variant — both existed as beans in the context, and it's not fully clear from
+outside which one actually won). Removed the ineffective property from both `application.yml`s
+rather than leave dead config with a misleading comment.
+
+**Fix: bypass the Micrometer/Spring Boot layer for this one interceptor.** Added
+`TracingPropagationInterceptor`, registered on the Gateway's `RestClient`, which reads
+`io.opentelemetry.context.Context.current()` directly and injects the header via
+`io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator.getInstance()` — OpenTelemetry's
+own, most fundamental propagation API, with no dependency on whichever Spring Boot/Micrometer
+auto-configuration path did or didn't wire correctly. Verified working via `TracePropagationTest`
+(traceId extracted from the captured `traceparent` header matches the Gateway's own captured log
+output) and, more strongly, via `CrossServiceTracePropagationTest` (boots a real Account Service
+in the same JVM; the identical traceId appears in *both* services' logs for one request — e.g.
+`15dedae53ae6b5b7595fc90cb9437657` showed up in both the Gateway's "Received event" log line and
+the Account Service's "Applied CREDIT transaction" log line, with different span IDs as
+expected).
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

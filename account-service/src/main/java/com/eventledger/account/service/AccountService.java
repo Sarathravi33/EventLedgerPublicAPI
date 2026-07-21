@@ -5,6 +5,8 @@ import com.eventledger.account.domain.Transaction;
 import com.eventledger.account.domain.TransactionType;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,8 @@ import java.util.List;
 
 @Service
 public class AccountService {
+
+    private static final Logger log = LoggerFactory.getLogger(AccountService.class);
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
@@ -42,6 +46,8 @@ public class AccountService {
     }
 
     private TransactionApplicationResult toExistingResult(Transaction existing) {
+        log.info("Idempotent replay of transaction {} for account {}; not re-applying", existing.getEventId(),
+                existing.getAccountId());
         Account account = getAccountOrThrow(existing.getAccountId());
         return new TransactionApplicationResult(account.getAccountId(), account.getBalance(), existing, true);
     }
@@ -58,6 +64,8 @@ public class AccountService {
                 new Transaction(eventId, accountId, type, amount, eventTimestamp, now));
 
         Account updated = getAccountOrThrow(accountId);
+        log.info("Applied {} transaction {} to account {}; new balance {}", type, eventId, accountId,
+                updated.getBalance());
         return new TransactionApplicationResult(accountId, updated.getBalance(), transaction, false);
     }
 

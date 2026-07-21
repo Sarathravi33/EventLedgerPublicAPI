@@ -9,6 +9,8 @@ import com.eventledger.gateway.domain.EventStatus;
 import com.eventledger.gateway.repository.EventRepository;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -17,6 +19,8 @@ import java.util.Set;
 
 @Service
 public class EventService {
+
+    private static final Logger log = LoggerFactory.getLogger(EventService.class);
 
     private final EventRepository eventRepository;
     private final AccountServiceClient accountServiceClient;
@@ -39,6 +43,8 @@ public class EventService {
      */
     public EventSubmissionResult submit(EventRequest request) {
         validate(request);
+        log.info("Received event {} for account {} ({} {})", request.eventId(), request.accountId(),
+                request.type(), request.amount());
 
         return eventRepository.findByEventId(request.eventId())
                 .map(this::handleExisting)
@@ -57,10 +63,12 @@ public class EventService {
 
     private EventSubmissionResult handleExisting(Event event) {
         if (event.getStatus() == EventStatus.APPLIED) {
+            log.info("Duplicate submission of already-applied event {}; returning stored result", event.getEventId());
             return new EventSubmissionResult(event, true);
         }
         // FAILED (Account Service was unreachable last time): a resubmission of the same
         // eventId is a genuine retry, not a no-op duplicate — attempt it again on the same row.
+        log.info("Retrying previously-failed event {}", event.getEventId());
         return applyDownstream(event);
     }
 
@@ -76,8 +84,11 @@ public class EventService {
             accountServiceClient.applyTransaction(event.getAccountId(), event.getEventId(), event.getType(),
                     event.getAmount(), event.getEventTimestamp());
             event.markApplied();
+            log.info("Applied event {} to account {}", event.getEventId(), event.getAccountId());
         } catch (AccountServiceCallException e) {
             event.markFailed(e.getMessage());
+            log.warn("Failed to apply event {} to account {}: {}", event.getEventId(), event.getAccountId(),
+                    e.getMessage());
         }
         eventRepository.save(event);
         return new EventSubmissionResult(event, false);

@@ -7,6 +7,8 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiter;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
@@ -64,9 +66,26 @@ public class ResilientAccountServiceClient implements AccountServiceClient {
         return execute(() -> delegate.getBalance(accountId));
     }
 
+    /**
+     * The actual downstream call runs on {@link #executor} (a different thread than the
+     * caller), which {@link TimeLimiter#decorateFutureSupplier} requires. The current span
+     * lives in OpenTelemetry's own {@link Context}, which — like any thread-local-backed
+     * context — does not automatically follow onto that new thread. Without capturing it here
+     * ({@code Context.current()}) and re-activating it on the executor thread
+     * ({@code makeCurrent()}), the outbound call would carry no {@code traceparent} header at
+     * all, since the RestClient's tracing instrumentation would find no current span to
+     * propagate — caught by {@code TracePropagationTest} before this shipped (see FIXES.md,
+     * Step 8).
+     */
     private <T> T execute(Supplier<T> supplier) {
+        Context otelContext = Context.current();
+        Supplier<T> contextPropagatingSupplier = () -> {
+            try (Scope scope = otelContext.makeCurrent()) {
+                return supplier.get();
+            }
+        };
         Callable<T> timeLimited = TimeLimiter.decorateFutureSupplier(timeLimiter,
-                () -> CompletableFuture.supplyAsync(supplier, executor));
+                () -> CompletableFuture.supplyAsync(contextPropagatingSupplier, executor));
         Callable<T> withRetry = Retry.decorateCallable(retry, timeLimited);
         Callable<T> withCircuitBreaker = CircuitBreaker.decorateCallable(circuitBreaker, withRetry);
 

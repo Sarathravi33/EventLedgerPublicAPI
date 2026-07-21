@@ -16,3 +16,10 @@ spring:
     properties:
       hibernate:
         format_sql: false
+
+management:
+  tracing:
+    sampling:
+      # Every request is traced (rather than Spring Boot's 10% default) — the brief requires a
+      # trace ID be generated per request, not sampled probabilistically.
+      probability: 1.0

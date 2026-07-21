@@ -262,20 +262,45 @@ success would double-credit or double-debit an account.
 
 ## 9. Distributed Tracing Design
 
-- Dependencies: `micrometer-tracing-bridge-otel`, `opentelemetry-exporter-logging` (console/log
-  exporter — no external collector required to satisfy the brief), Spring Boot's
-  auto-instrumented `RestClient`/`RestTemplateBuilder` and servlet filter chain.
-- The Gateway generates a trace on each inbound HTTP request (Spring's `ObservationFilter` via
-  Micrometer Tracing does this automatically for Spring MVC). The `traceparent` W3C header is
-  attached automatically when the Gateway's `RestClient` calls the Account Service, because that
-  client bean is built through Spring Boot's auto-configured, observation-instrumented
-  `RestClient.Builder`.
-- Both services bridge Micrometer's current trace/span IDs into SLF4J's MDC
-  (`traceId`/`spanId`), which the JSON log encoder (§10) picks up automatically — no manual
-  header plumbing in application code.
-- Verified by `TracePropagationIT`: Gateway calls a WireMock-stubbed Account Service, test
-  asserts the recorded request carried a `traceparent` header, and that the Gateway's own log
-  output for that request contains a matching `traceId`.
+- Dependencies (both services): `spring-boot-starter-actuator` (required, not optional — the
+  observation-based auto-instrumentation for the MVC filter chain and RestClient lives in
+  `spring-boot-actuator-autoconfigure`; without it `micrometer-tracing-bridge-otel` alone
+  provides only the tracer, nothing that creates/propagates spans), `micrometer-tracing-bridge-otel`,
+  `opentelemetry-exporter-logging` (console/log exporter — no external collector required to
+  satisfy the brief; wired via an explicit `SpanExporter` bean, since Spring Boot does not
+  auto-configure one just from the dependency being present).
+- The Gateway generates a trace on each inbound HTTP request automatically (Spring Boot's
+  observation-based MVC filter, active once actuator + the tracing bridge are present).
+  `management.tracing.sampling.probability: 1.0` is set on both services so every request is
+  traced, not Spring Boot's 10%-sampled default.
+- **The outbound `traceparent` header is attached explicitly**, not by Spring Boot's automatic
+  RestClient instrumentation. That auto-instrumentation registers correctly (every expected bean
+  — `ObservationRestClientCustomizer`, `PropagatingSenderTracingObservationHandler`, a
+  `Propagator`, etc. — is present in the context) but on this project's exact dependency
+  combination, the autoconfigured Micrometer `Propagator` bean resolved with zero registered
+  header fields (verified directly via `propagator.fields()` returning empty), so it silently
+  injected nothing regardless of `management.tracing.propagation.type`. `RestAccountServiceClient`'s
+  `RestClient` bean instead registers `TracingPropagationInterceptor`, which reads the current
+  span from OpenTelemetry's own `Context.current()` and injects the W3C header directly via
+  `io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator` — bypassing the
+  Micrometer/Spring Boot auto-wiring layer entirely. See FIXES.md (Step 8) for the full
+  debugging trail.
+- A second subtlety specific to this codebase: the actual downstream HTTP call happens inside
+  `ResilientAccountServiceClient`'s `TimeLimiter`-driven `CompletableFuture`, i.e. on a
+  different thread than the one holding the active span. `execute()` explicitly captures
+  `Context.current()` before the thread hop and re-activates it (`context.makeCurrent()`)
+  inside the async task, otherwise the interceptor above would find no current span to inject
+  at all.
+- Both services bridge the current trace/span IDs into SLF4J's MDC automatically
+  (`traceId`/`spanId`), which the JSON log encoder (§10) picks up — no manual code needed for
+  this part, confirmed empirically.
+- Verified by two tests: `TracePropagationTest` (Gateway calls a WireMock-stubbed Account
+  Service; asserts the recorded request carried a `traceparent` header, and that the traceId
+  extracted from it matches the Gateway's own captured log output for that request) and
+  `CrossServiceTracePropagationTest` (boots a *real* Account Service in the same JVM and asserts
+  the identical traceId appears in both services' own logs for one request — the stronger,
+  genuinely end-to-end proof that a single client request produces a traceable path across both
+  services, per requirement #3).
 
 ## 10. Structured Logging Design
 

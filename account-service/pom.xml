@@ -38,6 +38,28 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!--
+      Actuator is required here, not just for Step 10's health/metrics work: Spring Boot's
+      observation-based auto-instrumentation for the MVC filter chain (which creates a server
+      span per inbound request) lives in spring-boot-actuator-autoconfigure. Without it,
+      micrometer-tracing-bridge-otel below provides the tracer but nothing actually creates a
+      span per request.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-logging</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

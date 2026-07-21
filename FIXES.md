@@ -79,6 +79,49 @@ extended with a `replayed` boolean (`AccountService` already had both branches i
 just wasn't surfacing which one ran). Existing Step 2 tests were updated to assert `replayed()`
 explicitly rather than just ignoring the new field.
 
+## Step 6 — Event Gateway REST API + real Account Service client
+
+**`Prompt.md` gap: the balance-proxy endpoint was never scheduled.** `IMPLEMENTATION_PLAN.md`
+§6.1/§13 and `README.md` both document a Gateway-side `GET /accounts/{accountId}/balance`
+pass-through (needed to make the brief's balance-query graceful-degradation requirement
+reachable from a public client at all), but none of `Prompt.md`'s 13 steps actually scheduled
+building it — Step 6 only listed the three `/events` endpoints. Caught while implementing this
+step's controllers, before moving on. Resolved by adding `AccountProxyController` (and the
+corresponding `AccountServiceClient.getBalance(...)` method, `AccountNotFoundException` for a
+genuine 404 vs. `AccountServiceCallException` for a downstream-unreachable 503) as part of this
+step's scope, since it belongs naturally alongside the other controllers being wired up here
+and Step 7's resiliency wrapping needs to cover it too.
+
+**Build bug: the executable jar couldn't be used as a dependency.** To let the new full
+integration test boot a real Account Service Spring context in the same JVM (per this step's
+own instructions), `account-service` was added as a test-scope dependency of `event-gateway`.
+The build failed with "package com.eventledger.account does not exist" despite the jar
+containing the class — `spring-boot-maven-plugin`'s `repackage` goal, with no classifier
+configured, replaces the plain jar with the executable Spring Boot fat jar
+(`BOOT-INF/classes/...` layout), which cannot be resolved as a normal classpath dependency by
+another module. Fixed by adding `<classifier>exec</classifier>` to `account-service/pom.xml`'s
+`spring-boot-maven-plugin` config, which keeps the plain jar as the resolvable main artifact
+and moves the executable jar to `account-service-exec.jar`. `README.md`'s manual-run
+instructions were updated to reference the new `-exec` jar name.
+
+**Classpath collision: both modules ship `application.yml` at the same path.** Once
+account-service was on event-gateway's test classpath (previous fix), the integration test's
+manually-started Account Service context came up listening on port `8082` against
+`jdbc:h2:mem:gatewaydb` — the Gateway's own settings, not its own `8081`/`accountdb`. Caught by
+inspecting the context's own startup log (`Tomcat initialized with port 8082`), not by a failing
+assertion — the test still passed by coincidence, since the two services' entities use
+non-overlapping table names, so no data actually collided in the shared H2 instance. Root cause:
+both modules' `application.yml` resolve to the identical classpath resource path
+(`classpath:/application.yml`), and classpath resource lookup returns whichever the classloader
+finds first; separately, the original fix attempt used
+`SpringApplicationBuilder.properties("server.port=0", ...)`, which sets low-precedence "default
+properties" that any `application.yml` easily overrides — so even the intended override silently
+did nothing. Fixed by switching to `SpringApplicationBuilder.run("--server.port=0",
+"--spring.datasource.url=...", ...)` — command-line-style args, which take precedence over any
+classpath `application.yml` — and pointing the test's Account Service context at a distinctly
+named `accountdb-it` in-memory database. Re-verified via the startup log: the context now binds
+a random port against `accountdb-it`, fully isolated from the Gateway's own `gatewaydb`.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

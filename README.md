@@ -105,9 +105,13 @@ Or run the packaged jars:
 ```bash
 mvn -pl account-service package -DskipTests
 mvn -pl event-gateway package -DskipTests
-java -jar account-service/target/account-service.jar
+java -jar account-service/target/account-service-exec.jar
 java -jar event-gateway/target/event-gateway.jar
 ```
+
+(Account Service's executable jar is suffixed `-exec` — its plain jar is kept as the resolvable
+Maven artifact so `event-gateway`'s integration test can depend on it in test scope; see the
+`spring-boot-maven-plugin` config in `account-service/pom.xml`.)
 
 ## API Usage Examples
 

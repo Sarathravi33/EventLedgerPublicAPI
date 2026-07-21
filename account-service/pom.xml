@@ -51,6 +51,17 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <!--
+            Without a classifier, "repackage" replaces the plain jar with the executable
+            Spring Boot fat jar (BOOT-INF/classes/... layout), which cannot be resolved as a
+            normal dependency's classpath entry by another module (event-gateway depends on
+            this jar in test scope — see its pom.xml). The classifier keeps the plain jar as
+            the resolvable main artifact and moves the executable jar to
+            account-service-exec.jar; run/Docker instructions must use that "-exec" jar.
+          -->
+          <classifier>exec</classifier>
+        </configuration>
       </plugin>
     </plugins>
   </build>

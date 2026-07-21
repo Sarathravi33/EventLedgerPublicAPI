@@ -43,6 +43,20 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+
+    <!--
+      Test-scope only: lets the full Gateway-to-Account-Service integration test boot a real
+      Account Service Spring context in the same JVM on a random port. This does not affect
+      either service's deployed runtime artifact (test-scope dependencies are excluded from
+      the packaged jar) — the two services remain independently deployable; see
+      IMPLEMENTATION_PLAN.md §17 and FIXES.md (Step 6) for the reasoning.
+    -->
+    <dependency>
+      <groupId>com.eventledger</groupId>
+      <artifactId>account-service</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

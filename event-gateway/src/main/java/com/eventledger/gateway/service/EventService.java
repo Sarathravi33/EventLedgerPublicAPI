@@ -82,4 +82,13 @@ public class EventService {
         eventRepository.save(event);
         return new EventSubmissionResult(event, false);
     }
+
+    public Event getByEventIdOrThrow(String eventId) {
+        return eventRepository.findByEventId(eventId)
+                .orElseThrow(() -> new EventNotFoundException(eventId));
+    }
+
+    public List<Event> listByAccount(String accountId) {
+        return eventRepository.findByAccountIdOrderByEventTimestampAsc(accountId);
+    }
 }

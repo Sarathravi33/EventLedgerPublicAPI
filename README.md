@@ -4,10 +4,10 @@ A two-service system for ingesting financial transaction events that may arrive 
 order** or be **delivered more than once**, while keeping account balances correct and
 degrading gracefully when the internal Account Service is unavailable.
 
-> **Status**: this README describes the target design as specified in
-> [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) and built step-by-step per
-> [Prompt.md](Prompt.md). Sections below will be kept in sync as implementation proceeds; if
-> anything here ever disagrees with the actual code, the code wins.
+> Built incrementally per the step-by-step sequence in [Prompt.md](Prompt.md), against the
+> design in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md); every step that surfaced a real
+> bug or a plan/reality gap is recorded in [FIXES.md](FIXES.md). This README describes the
+> system as it actually behaves as of the final step.
 
 ## Architecture
 
@@ -43,7 +43,7 @@ share no database and no in-process state — only the REST contract described b
 - Micrometer Tracing + OpenTelemetry bridge for trace propagation
 - Logback + `logstash-logback-encoder` for structured JSON logs
 - Micrometer + Actuator for metrics and health
-- JUnit 5, Mockito, WireMock, JaCoCo for testing and coverage
+- JUnit 5, Mockito, AssertJ, WireMock, JaCoCo for testing and coverage
 - Maven (multi-module), Docker / Docker Compose
 
 ## Repository Structure
@@ -62,12 +62,12 @@ EventLedgerAPI/
 ## Prerequisites
 
 - JDK 21
-- Maven 3.9+ (or the included `mvnw` wrapper, once added)
+- Maven 3.9+
 - Docker + Docker Compose (optional, but preferred for running the full stack)
 
 ## Configuration
 
-Key settings (see [IMPLEMENTATION_PLAN.md §18](IMPLEMENTATION_PLAN.md#18-configuration-reference-planned-applicationyml-keys)
+Key settings (see [IMPLEMENTATION_PLAN.md §18](IMPLEMENTATION_PLAN.md#18-configuration-reference-applicationyml-keys-as-built)
 for the full list):
 
 | Setting | Default | Notes |
@@ -211,12 +211,13 @@ for the full rationale.
 ## Running Tests & Coverage
 
 ```bash
-mvn test      # unit + slice tests, both modules
-mvn verify    # adds WireMock resiliency/tracing tests, integration tests, and JaCoCo enforcement
+mvn test      # runs the full suite on both modules — unit, slice, WireMock resiliency/tracing, and integration tests all run in this same phase
+mvn verify    # everything `mvn test` does, plus JaCoCo coverage enforcement (build fails under 80%)
 ```
 
 - JaCoCo is configured in both modules with an enforced minimum of **80% line coverage**
-  (`mvn verify` fails the build under that threshold).
+  (`mvn verify` fails the build under that threshold). As built: **66 tests total** (18 in
+  `account-service`, 48 in `event-gateway`), line coverage **92.9%** / **96.1%** respectively.
 - HTML coverage reports: `event-gateway/target/site/jacoco/index.html` and
   `account-service/target/site/jacoco/index.html`.
 - Test categories: idempotency, out-of-order/balance correctness, validation, resiliency

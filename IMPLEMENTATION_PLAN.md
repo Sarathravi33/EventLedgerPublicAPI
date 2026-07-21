@@ -26,22 +26,22 @@ the Gateway → Account Service call.
 
 ## 2. Requirement Traceability Matrix
 
-| # | Requirement | Design Decision | Component | Verified By |
+| # | Requirement | Design Decision | Component | Verified By (actual test classes, as built) |
 |---|---|---|---|---|
-| 1a | Idempotency | Unique `eventId` constraint + status-aware replay logic (§7) | Gateway `EventService` | `EventIdempotencyTest`, `EventControllerIT` |
-| 1b | Out-of-order tolerance | Balance = SQL `SUM`/atomic increment (order-independent); listings `ORDER BY event_timestamp` (§8) | Gateway `EventRepository`, Account `AccountService` | `BalanceOrderIndependenceTest`, `EventOrderingTest` |
-| 1c | Balance computation | CREDIT increments, DEBIT decrements, atomic `UPDATE ... SET balance = balance ± ?` | Account Service | `AccountServiceTest` |
-| 1d | Validation | Jakarta Bean Validation + custom enum validator + `GlobalExceptionHandler` → RFC 7807 `ProblemDetail` | Gateway `EventRequest` DTO | `EventValidationTest` |
-| 2 | Service separation | Two Maven modules, two Spring Boot processes, two H2 instances, REST-only contract, no shared runtime code | Root project layout (§4) | `docker-compose up` smoke test |
-| 3 | Distributed tracing | Micrometer Tracing + OTel bridge; W3C `traceparent` header auto-propagated by instrumented `RestClient`; trace/span IDs in MDC | Both services | `TracePropagationIT` |
-| 4a | Structured logging | Logback + `logstash-logback-encoder`, JSON fields: timestamp, level, service, traceId, spanId, message | Both services | Manual log inspection + `LoggingConfigTest` |
-| 4b | Health checks | `/health` (Actuator remapped), custom indicator reports own DB + downstream reachability (Gateway only) | Both services | `HealthEndpointIT` |
-| 4c | Custom metric | Micrometer counters/timers, exposed at `/actuator/prometheus` (§11) | Both services | `MetricsTest` |
-| 5 | Resiliency pattern | Resilience4j: Timeout + Circuit Breaker (primary), bounded Retry w/ backoff layered underneath (§12) | Gateway `AccountServiceClient` | `ResiliencyIT` (WireMock) |
-| 6 | Graceful degradation | Event persisted locally before calling downstream; `POST /events` → 503 on downstream failure but data retained; `GET` endpoints never touch Account Service (§13) | Gateway | `DegradationIT` |
-| 7 | Docker Compose | `docker-compose.yml` with both services, healthchecks, explicit start order | Root | `docker-compose config` + manual run |
-| 8 | Automated tests | Unit + slice + WireMock resiliency + full integration test (§15) | Both modules | `mvn test` / `mvn verify` |
-| 9 | README | Architecture, setup, run, test, resiliency rationale | Root | This repo |
+| 1a | Idempotency | Unique `eventId` constraint + status-aware replay logic (§7) | Gateway `EventService`, Account `AccountService` | `EventServiceTest` (duplicate/retry-of-failed branches), `AccountServiceTest.idempotentReplay_*`, `TransactionRepositoryTest.enforcesUniqueEventId`, `EventRepositoryTest.enforcesUniqueEventId`, `EventControllerTest`, `AccountControllerTest`, `GatewayAccountServiceIntegrationTest.duplicateSubmission_*` |
+| 1b | Out-of-order tolerance | Balance = SQL `SUM`/atomic increment (order-independent); listings `ORDER BY event_timestamp` (§8) | Gateway `EventRepository`, Account `AccountService`/`TransactionRepository` | `TransactionRepositoryTest.computesBalanceCorrectlyRegardlessOfInsertionOrder` + `.ordersEventsChronologicallyRegardlessOfInsertionOrder`, `EventRepositoryTest.ordersEventsChronologicallyRegardlessOfInsertionOrder`, `GatewayAccountServiceIntegrationTest.outOfOrderEvents_areAppliedCorrectlyAndListedChronologically` |
+| 1c | Balance computation | CREDIT increments, DEBIT decrements, atomic `UPDATE ... SET balance = balance ± ?` | Account Service | `AccountServiceTest`, `AccountServiceConcurrencyTest` (proves atomicity under concurrent applies) |
+| 1d | Validation | Jakarta Bean Validation + custom enum validator + `GlobalExceptionHandler` → RFC 7807 `ProblemDetail` | Gateway `EventRequest`/`EventService`, Account `TransactionRequest` | `EventServiceTest` (7-case validation matrix), `EventControllerTest`, `AccountControllerTest` |
+| 2 | Service separation | Two Maven modules, two Spring Boot processes, two H2 instances, REST-only contract, no shared runtime code (test-scope-only exception, documented in §17) | Root project layout (§4) | Both apps boot independently (Step 0); `docker compose up --build` + manual smoke test (Step 11, FIXES.md) |
+| 3 | Distributed tracing | Micrometer Tracing + OTel bridge; W3C `traceparent` header explicitly propagated via `TracingPropagationInterceptor` (§9 explains why not left to auto-instrumentation alone); trace/span IDs in MDC | Both services | `TracePropagationTest` (WireMock), `CrossServiceTracePropagationTest` (real Account Service, same traceId in both services' logs) |
+| 4a | Structured logging | Logback + `logstash-logback-encoder`, JSON fields: timestamp, level, service, traceId, spanId, logger, message | Both services | `StructuredLoggingTest` (one per module) + manual log inspection against real running services (Step 9, FIXES.md) |
+| 4b | Health checks | `/health` (Actuator remapped to root), non-fatal `accountService` indicator reports own DB + downstream reachability (Gateway only) | Both services | `HealthAndMetricsTest` (one per module; Gateway's covers both reachable and unreachable cases) + manual `curl` against real services and Docker Compose (Steps 10–11) |
+| 4c | Custom metric | Micrometer counters/timers; `resilience4j.circuitbreaker.state` auto-bound with no custom code (§11) | Both services | `HealthAndMetricsTest` (counter-increment assertions) + manual `curl /metrics` verification |
+| 5 | Resiliency pattern | Resilience4j: Timeout + Circuit Breaker (primary), bounded Retry w/ backoff layered underneath (§12) | Gateway `ResilientAccountServiceClient` | `AccountServiceResiliencyTest` (WireMock: timeout, circuit-open, retry-recovers) |
+| 6 | Graceful degradation | Event persisted locally before calling downstream; `POST /events` → 503 on downstream failure but data retained; `GET` endpoints never touch Account Service (§13) | Gateway | `AccountServiceResiliencyTest.getEventById_and_listByAccount_stillWorkWhileCircuitIsOpen` + `.postEvents_whenCircuitIsOpen_*`, plus a real Docker Compose degradation test (stopped `account-service` container — Step 11, FIXES.md) |
+| 7 | Docker Compose | `docker-compose.yml` with both services, healthchecks, `depends_on: service_healthy` | Root | `docker compose up --build` + full smoke test + degradation re-test, all against real containers (Step 11, FIXES.md) |
+| 8 | Automated tests | Unit + slice + WireMock resiliency + full integration test (§15); JaCoCo-enforced ≥80% line coverage on both modules | Both modules | `mvn verify` (66 tests total: 18 account-service, 48 event-gateway; account-service 92.9%, event-gateway 96.1% line coverage) |
+| 9 | README | Architecture, setup, run, test, resiliency rationale | Root | This repo, reconciled against the as-built system in Step 12 |
 
 ## 3. High-Level Architecture
 
@@ -467,11 +467,16 @@ the breaker prematurely.
 | Tracing | WireMock request capture + log capture (`ListAppender`) | `traceparent` header present on outbound call; same trace ID appears in Gateway log line for that request |
 | Full integration | `@SpringBootTest(webEnvironment=RANDOM_PORT)` for both modules running together in one JVM (Gateway pointed at the real Account Service's random port) | end-to-end POST → applied balance → GET listing order → duplicate replay |
 
-**Coverage tooling**: JaCoCo Maven plugin in both module POMs, aggregated at the parent via
-`jacoco:report-aggregate`. Target: **≥ 80% line coverage** per module, enforced via
-`jacoco:check` bound to `verify` (build fails under threshold) — chosen as a reasonable bar
-that's enforceable in CI without chasing 100% on generated/boilerplate code (entities, DTOs).
-Run with `mvn verify`; HTML report at `target/site/jacoco/index.html` per module.
+**Coverage tooling**: JaCoCo Maven plugin in both module POMs independently (no parent-level
+aggregation — each module's `check` execution enforces its own threshold). Target: **≥ 80%
+line coverage** per module, enforced via `jacoco:check` bound to `verify` (build fails under
+threshold) — chosen as a reasonable bar that's enforceable without chasing 100% on
+boilerplate (the two `*Application` main classes' `SpringApplication.run(...)` line is the
+main accepted gap — `@SpringBootTest` never invokes a class's actual `main` method, and this
+is a universally-accepted, low-value line to chase in Spring Boot projects). Run with `mvn
+verify`; HTML report at `target/site/jacoco/index.html` per module. As built: **66 tests total
+(18 account-service, 48 event-gateway)**, line coverage **92.9% (account-service)** / **96.1%
+(event-gateway)** — both comfortably clear the threshold.
 
 ## 16. Build & Delivery Milestones
 
@@ -510,14 +515,20 @@ This ordering matches the step-by-step prompts in [Prompt.md](Prompt.md).
   generated, propagated, and logged — no visualization backend is required and adding one would
   be infrastructure beyond what's asked.
 
-## 18. Configuration Reference (planned `application.yml` keys)
+## 18. Configuration Reference (`application.yml` keys, as built)
 
 | Key | Service | Purpose |
 |---|---|---|
 | `server.port` | both | `8082` gateway / `8081` account |
-| `account-service.base-url` | gateway | e.g. `http://localhost:8081` (Compose overrides via env) |
+| `account-service.base-url` | gateway | `http://localhost:8081` by default; overridden via `ACCOUNT_SERVICE_BASE_URL` env var in Docker Compose |
 | `resilience4j.*` | gateway | see §12 |
-| `management.endpoints.web.base-path` | both | `/` so Actuator health serves at `/health` |
-| `management.endpoints.web.exposure.include` | both | `health,prometheus,metrics` |
-| `logging.pattern.*` / logback JSON encoder config | both | §10 |
+| `management.endpoints.web.base-path` | both | `/` so Actuator health serves at `/health` (also moves `/metrics`, `/prometheus` to root — see §11) |
+| `management.endpoints.web.exposure.include` | both | `health,metrics,prometheus` |
+| `management.endpoint.health.show-details` | both | `always` — required for the `db`/`accountService` sub-components to actually appear in the response body |
+| `management.tracing.sampling.probability` | both | `1.0` — every request traced, not Spring Boot's 10% default |
 | `spring.datasource.url` | both | `jdbc:h2:mem:<service>db;DB_CLOSE_DELAY=-1` |
+
+JSON log formatting is **not** configured via `logging.pattern.*` properties — it's a separate
+`logback-spring.xml` per service configuring `LogstashEncoder` directly (§10), since that
+encoder's field-name remapping (`timestamp`/`logger`) and custom-field injection aren't
+expressible through `application.yml` alone.

@@ -286,6 +286,64 @@ during manual testing is a harsher failure mode than the "still running but erro
 scenario the WireMock-based tests simulate, and the resulting number could otherwise look like
 a bug to someone reproducing this smoke test without this context.
 
+## Step 12 — Coverage enforcement, full test sweep, README/plan reconciliation
+
+**JaCoCo enforcement passed on the first run — no code changes needed.** Added the plugin
+(`prepare-agent`/`report`/`check`, 80% line minimum, bound to `test`/`verify`) to both module
+POMs. Both modules cleared the threshold immediately: account-service 92.1%, event-gateway
+95.3%, on the strength of the test suite already built across Steps 1–11 — no coverage-driven
+scrambling was needed at the end.
+
+**One small real gap closed anyway: `MetadataConverter`'s error-handling branches were
+untested.** Checking JaCoCo's per-class breakdown (not just the passing aggregate) turned up
+`MetadataConverter` at 69.2% — its two `catch` blocks (wrapping JSON (de)serialization
+failures as `IllegalArgumentException`) had never been exercised. Added
+`MetadataConverterTest`, including a case that feeds malformed JSON through
+`convertToEntityAttribute` to hit the deserialization-failure branch. (The
+serialization-failure branch in `convertToDatabaseColumn` was left untested — triggering it
+would require a deliberately non-serializable object, which is a contrived, near-unreachable
+case in practice; chased the branch that's actually plausible in production, not the one that
+isn't.) Final numbers after this addition: **account-service 92.9%, event-gateway 96.1%**,
+66 tests total (18 + 48).
+
+**README reconciliation found several real staleness issues, not just cosmetic ones:**
+- The "Status" callout at the top still described the system as in-progress ("target design...
+  as implementation proceeds") — stale now that all 12 steps are complete.
+- Prerequisites mentioned "the included `mvnw` wrapper, once added" — that wrapper was never
+  actually added at any point; the parenthetical was a stale forward-looking promise. Removed
+  rather than fulfilled, since plain `mvn` already satisfies "runnable via a standard command."
+- **`mvn test` vs `mvn verify` was described inaccurately**: README claimed `mvn test` ran only
+  "unit + slice tests" and `mvn verify` additionally ran "WireMock resiliency/tracing tests,
+  integration tests." This is wrong — no Failsafe plugin or separate IT-suffix convention was
+  ever configured, so Surefire's default `test` phase runs the *entire* suite (WireMock,
+  tracing, integration tests included) under plain `mvn test` already; `mvn verify` only adds
+  the JaCoCo `check` goal on top of the same test run. Corrected the description.
+- `IMPLEMENTATION_PLAN.md` §18's configuration table claimed JSON logging was configured via
+  `logging.pattern.*` properties — it isn't; it's a separate `logback-spring.xml` per service
+  configuring `LogstashEncoder` directly (Step 9), since the field-name remapping and
+  custom-field injection used there aren't expressible through `application.yml` alone.
+  Corrected, and added the `management.endpoint.health.show-details` and
+  `management.tracing.sampling.probability` keys that were missing from that table despite
+  being real, load-bearing config added in Steps 8 and 10.
+- `IMPLEMENTATION_PLAN.md` §2's requirement traceability matrix still listed the *planned*
+  test class names from before implementation (`EventIdempotencyTest`, `ResiliencyIT`,
+  `HealthEndpointIT`, etc.) — none of which are the actual class names that got built
+  (`EventServiceTest`, `AccountServiceResiliencyTest`, `HealthAndMetricsTest`, ...). Updated
+  every row to reference the real test classes, so the matrix is now a genuinely useful map
+  from requirement to passing test rather than a stale planning artifact.
+
+**Final requirement gap-check (brief requirements #1–#9, re-read against the as-built code):
+no gaps found.** Idempotency, out-of-order tolerance, balance computation, and validation are
+each covered by multiple tests across both modules; service separation holds with the one
+documented, non-runtime-affecting exception (§17); tracing, structured logging, health, and
+metrics are all implemented and verified against real running services, not just mocks;
+exactly one resiliency pattern (circuit breaker + timeout, with retry layered in) is
+implemented and its degradation behavior is proven both in unit tests and in real Docker
+Compose (Step 11); Docker Compose is complete and manually verified; the automated test suite
+covers every category the brief asks for, including a full Gateway → Account Service
+integration test, and runs via the standard `mvn test`/`mvn verify` commands; and this README
+has now been reconciled against the actual, final behavior of the system.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

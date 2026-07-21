@@ -122,6 +122,39 @@ classpath `application.yml` — and pointing the test's Account Service context 
 named `accountdb-it` in-memory database. Re-verified via the startup log: the context now binds
 a random port against `accountdb-it`, fully isolated from the Gateway's own `gatewaydb`.
 
+## Step 7 — Resiliency (circuit breaker, timeout, bounded retry)
+
+**Plan gap: `minimum-number-of-calls` would have silently defeated the sliding window.**
+While writing the WireMock test asserting the circuit opens after enough failures, tracing
+through exactly *when* Resilience4j evaluates the failure rate surfaced that its own default
+for `minimum-number-of-calls` is 100, independent of `sliding-window-size` — so the original
+`IMPLEMENTATION_PLAN.md` §12 sketch (`sliding-window-size: 10` with no `minimum-number-of-calls`)
+would never have opened the breaker until 100 calls were recorded, regardless of how many of
+the most recent 10 failed. Caught by reasoning through the test design before writing any code
+that would have exhibited it at runtime. Fixed by explicitly setting
+`minimum-number-of-calls: 10` to match the window size, in both `application.yml` and the
+updated `IMPLEMENTATION_PLAN.md` §12 snippet.
+
+**Design refinement: `AccountNotFoundException` needed to be excluded from Retry/CircuitBreaker.**
+A 404 from the Account Service (a genuinely nonexistent account) is a business outcome, not an
+infrastructure failure — retrying it wastes the retry budget on an answer that will never
+change, and counting it against the circuit breaker's failure rate would open the breaker for
+public clients innocently querying unknown account IDs, not for actual Account Service health
+problems. Added `ignore-exceptions: [com.eventledger.gateway.client.AccountNotFoundException]`
+to both the `retry` and `circuitbreaker` instances before this could manifest as a real
+incident (a burst of "balance for an account that was never created" lookups tripping the
+breaker for everyone else).
+
+**Build bug: `wiremock:3.3.1` fails at server startup with `IncompatibleClassChangeError`.**
+The first resiliency test run failed immediately on WireMock server startup:
+`class org.eclipse.jetty.http2.server.HttpChannelOverHTTP2 has interface
+org.eclipse.jetty.server.HttpChannel as super class`. `mvn dependency:tree` showed the plain
+`org.wiremock:wiremock:3.3.1` artifact transitively pulling **both** Jetty 12.0.8
+(`jetty-server`, `jetty-io`) and Jetty 11.0.18 (`jetty-servlet`, `jetty-servlets`,
+`jetty-webapp`, `http2-server`) — a packaging bug in that release. Fixed by switching to
+`org.wiremock:wiremock-standalone:3.3.1`, which shades its dependencies and avoids the
+transitive conflict entirely; re-ran the full resiliency suite afterward to confirm.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

@@ -10,13 +10,15 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * No resiliency handling here by design (timeout/retry/circuit-breaker wrapping is added
- * around this client in a later step) — this is the plain happy-path HTTP call, with any
- * failure normalized to {@link AccountServiceCallException} so {@code EventService} has a
- * single failure signal to handle regardless of cause (timeout, connection refused, 5xx, ...).
+ * The plain HTTP call, with no resiliency handling of its own — any failure is normalized to
+ * {@link AccountServiceCallException} (or {@link AccountNotFoundException} for a genuine 404)
+ * so callers have a single failure signal to handle regardless of cause. Deliberately does
+ * <b>not</b> implement {@link AccountServiceClient} — {@link ResilientAccountServiceClient}
+ * wraps this class and is the sole bean of that type, so nothing can accidentally bypass the
+ * timeout/retry/circuit-breaker layer by autowiring the interface.
  */
 @Component
-public class RestAccountServiceClient implements AccountServiceClient {
+public class RestAccountServiceClient {
 
     private final RestClient restClient;
 
@@ -24,7 +26,6 @@ public class RestAccountServiceClient implements AccountServiceClient {
         this.restClient = accountServiceRestClient;
     }
 
-    @Override
     public AccountServiceApplyResult applyTransaction(String accountId, String eventId, EventType type,
                                                         BigDecimal amount, Instant eventTimestamp) {
         try {
@@ -39,7 +40,6 @@ public class RestAccountServiceClient implements AccountServiceClient {
         }
     }
 
-    @Override
     public BigDecimal getBalance(String accountId) {
         try {
             AccountBalanceResponse response = restClient.get()

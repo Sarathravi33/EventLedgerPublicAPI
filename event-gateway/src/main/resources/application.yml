@@ -19,3 +19,35 @@ spring:
 
 account-service:
   base-url: http://localhost:8081
+
+resilience4j:
+  timelimiter:
+    instances:
+      accountService:
+        timeout-duration: 1500ms
+  retry:
+    instances:
+      accountService:
+        max-attempts: 2
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        # "Account not found" is a legitimate business outcome, not a transient failure —
+        # retrying it would just waste the retry budget on a 404 that will never change.
+        ignore-exceptions:
+          - com.eventledger.gateway.client.AccountNotFoundException
+  circuitbreaker:
+    instances:
+      accountService:
+        sliding-window-size: 10
+        # Without this, Resilience4j's default (100) applies regardless of sliding-window-size,
+        # so the breaker would never evaluate/open until 100 calls had been recorded — silently
+        # defeating a window size of 10. Must match sliding-window-size for COUNT_BASED windows.
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        # Same reasoning as the retry config above — a 404 is not an infrastructure failure and
+        # must not count against the breaker's failure rate.
+        ignore-exceptions:
+          - com.eventledger.gateway.client.AccountNotFoundException

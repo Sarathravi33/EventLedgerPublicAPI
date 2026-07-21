@@ -1,0 +1,92 @@
+package com.eventledger.gateway.client;
+
+import com.eventledger.gateway.domain.EventType;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryRegistry;
+import io.github.resilience4j.timelimiter.TimeLimiter;
+import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+import jakarta.annotation.PreDestroy;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Supplier;
+
+/**
+ * Wraps {@link RestAccountServiceClient} with the resiliency pattern from §12 of
+ * IMPLEMENTATION_PLAN.md: {@code CircuitBreaker(Retry(TimeLimiter(call)))}. Composition order
+ * (outermost to innermost) matters — TimeLimiter bounds each individual attempt, Retry wraps
+ * that so a bounded number of attempts are each individually time-limited, and CircuitBreaker
+ * wraps the whole retrying operation so it sees ONE success/failure outcome per logical call
+ * rather than counting each retry attempt separately (which would trip the breaker on a single
+ * flaky-but-recovering call).
+ * <p>
+ * Every failure mode — timeout, retries exhausted, or the circuit already open — is normalized
+ * to {@link AccountServiceCallException} so {@code EventService} keeps a single failure signal
+ * regardless of cause. {@link AccountNotFoundException} is deliberately left unwrapped and is
+ * configured (see application.yml) to be ignored by both Retry and the CircuitBreaker: a 404 is
+ * a legitimate business outcome, not an infrastructure failure.
+ */
+@Component
+public class ResilientAccountServiceClient implements AccountServiceClient {
+
+    private final RestAccountServiceClient delegate;
+    private final TimeLimiter timeLimiter;
+    private final Retry retry;
+    private final CircuitBreaker circuitBreaker;
+    private final ExecutorService executor = Executors.newCachedThreadPool();
+
+    public ResilientAccountServiceClient(RestAccountServiceClient delegate,
+                                          TimeLimiterRegistry timeLimiterRegistry,
+                                          RetryRegistry retryRegistry,
+                                          CircuitBreakerRegistry circuitBreakerRegistry) {
+        this.delegate = delegate;
+        this.timeLimiter = timeLimiterRegistry.timeLimiter("accountService");
+        this.retry = retryRegistry.retry("accountService");
+        this.circuitBreaker = circuitBreakerRegistry.circuitBreaker("accountService");
+    }
+
+    @Override
+    public AccountServiceApplyResult applyTransaction(String accountId, String eventId, EventType type,
+                                                        BigDecimal amount, Instant eventTimestamp) {
+        return execute(() -> delegate.applyTransaction(accountId, eventId, type, amount, eventTimestamp));
+    }
+
+    @Override
+    public BigDecimal getBalance(String accountId) {
+        return execute(() -> delegate.getBalance(accountId));
+    }
+
+    private <T> T execute(Supplier<T> supplier) {
+        Callable<T> timeLimited = TimeLimiter.decorateFutureSupplier(timeLimiter,
+                () -> CompletableFuture.supplyAsync(supplier, executor));
+        Callable<T> withRetry = Retry.decorateCallable(retry, timeLimited);
+        Callable<T> withCircuitBreaker = CircuitBreaker.decorateCallable(circuitBreaker, withRetry);
+
+        try {
+            return withCircuitBreaker.call();
+        } catch (Exception e) {
+            Throwable cause = (e instanceof ExecutionException && e.getCause() != null) ? e.getCause() : e;
+            if (cause instanceof AccountNotFoundException notFound) {
+                throw notFound;
+            }
+            if (cause instanceof AccountServiceCallException callException) {
+                throw callException;
+            }
+            throw new AccountServiceCallException("Account Service call failed: " + cause.getClass().getSimpleName()
+                    + (cause.getMessage() != null ? ": " + cause.getMessage() : ""), cause);
+        }
+    }
+
+    @PreDestroy
+    void shutdown() {
+        executor.shutdown();
+    }
+}

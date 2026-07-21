@@ -39,8 +39,27 @@
     </dependency>
 
     <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-spring-boot3</artifactId>
+      <version>2.2.0</version>
+    </dependency>
+
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      wiremock-standalone (not the plain "wiremock" artifact): 3.3.1's plain artifact has a
+      packaging bug pulling both Jetty 11 and Jetty 12 transitively, causing an
+      IncompatibleClassChangeError at server startup. The standalone artifact shades its
+      dependencies, avoiding the conflict. See FIXES.md (Step 7).
+    -->
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
+      <version>3.3.1</version>
       <scope>test</scope>
     </dependency>
 

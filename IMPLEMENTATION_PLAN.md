@@ -342,7 +342,7 @@ Rationale (for the "be prepared to explain your choice" ask):
   bulkheads defend against here. It is called out in §17 as a reasonable follow-up if the
   Gateway acquires other downstream calls in the future.
 
-Indicative configuration (tunable, not final):
+As-implemented configuration (`event-gateway/src/main/resources/application.yml`):
 
 ```yaml
 resilience4j:
@@ -357,14 +357,38 @@ resilience4j:
         wait-duration: 200ms
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          - com.eventledger.gateway.client.AccountNotFoundException
   circuitbreaker:
     instances:
       accountService:
         sliding-window-size: 10
+        minimum-number-of-calls: 10
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 3
+        ignore-exceptions:
+          - com.eventledger.gateway.client.AccountNotFoundException
 ```
+
+Two additions beyond the original indicative sketch, both worth calling out:
+- `minimum-number-of-calls` must be set explicitly to match `sliding-window-size` — Resilience4j's
+  own default for this value is 100 regardless of window size, so without this the breaker would
+  never evaluate/open until 100 calls had been recorded, silently defeating a window size of 10.
+- `ignore-exceptions` on both Retry and CircuitBreaker excludes `AccountNotFoundException`: a 404
+  from the Account Service is a legitimate business outcome (the account genuinely doesn't
+  exist), not an infrastructure failure — it must not be retried, and it must not count against
+  the breaker's failure rate the way a timeout or connection failure does.
+
+Composition (`ResilientAccountServiceClient`): `CircuitBreaker(Retry(TimeLimiter(call)))`,
+built via Resilience4j's `Callable`-based decorators rather than `@CircuitBreaker`/`@Retry`/
+`@TimeLimiter` annotations — `@TimeLimiter` requires the underlying method to return a
+`CompletableFuture`, which would leak async/reactive style into an otherwise synchronous
+client for no benefit here, and the programmatic composition is what makes the WireMock-backed
+tests (below) deterministic. CircuitBreaker is outermost so it evaluates one outcome per
+logical call (after retries are exhausted or succeed), not one outcome per HTTP attempt —
+otherwise a single flaky-but-recovering call would count as multiple failures and could trip
+the breaker prematurely.
 
 ## 13. Graceful Degradation Behavior Matrix
 

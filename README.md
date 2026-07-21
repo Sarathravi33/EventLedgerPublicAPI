@@ -13,7 +13,7 @@ degrading gracefully when the internal Account Service is unavailable.
 
 ```
                           ┌──────────────────────────┐
-Browser / Client ───────▶ │  Event Gateway API :8080  │
+Browser / Client ───────▶ │  Event Gateway API :8082  │
                           │  (public-facing)          │
                           └──────────┬────────────────┘
                                      │ REST (sync, traceparent propagated)
@@ -72,7 +72,7 @@ for the full list):
 
 | Setting | Default | Notes |
 |---|---|---|
-| Gateway port | `8080` | `server.port` |
+| Gateway port | `8082` | `server.port` |
 | Account Service port | `8081` | `server.port` |
 | Account Service URL (as seen by Gateway) | `http://localhost:8081` | overridden to `http://account-service:8081` in Docker Compose |
 | Health endpoint | `/health` on both services | remapped from Actuator's default `/actuator/health` |
@@ -84,7 +84,7 @@ for the full list):
 docker compose up --build
 ```
 
-This starts `account-service` on `localhost:8081` and `event-gateway` on `localhost:8080`. The
+This starts `account-service` on `localhost:8081` and `event-gateway` on `localhost:8082`. The
 Gateway waits for the Account Service's healthcheck before starting. Stop with `docker compose
 down`.
 
@@ -114,7 +114,7 @@ java -jar event-gateway/target/event-gateway.jar
 Submit an event:
 
 ```bash
-curl -i -X POST http://localhost:8080/events \
+curl -i -X POST http://localhost:8082/events \
   -H "Content-Type: application/json" \
   -d '{
     "eventId": "evt-001",
@@ -133,25 +133,25 @@ creating a second event or double-applying the balance.
 Fetch a single event:
 
 ```bash
-curl http://localhost:8080/events/evt-001
+curl http://localhost:8082/events/evt-001
 ```
 
 List events for an account, chronologically ordered by `eventTimestamp`:
 
 ```bash
-curl "http://localhost:8080/events?account=acct-123"
+curl "http://localhost:8082/events?account=acct-123"
 ```
 
 Check a balance (proxied through the Gateway; returns `503` if the Account Service is down):
 
 ```bash
-curl http://localhost:8080/accounts/acct-123/balance
+curl http://localhost:8082/accounts/acct-123/balance
 ```
 
 Health checks:
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8082/health
 curl http://localhost:8081/health
 ```
 
@@ -265,7 +265,7 @@ here rather than made silently. (Full rationale for the design-heavy ones is in
 **Infrastructure & non-functional choices**
 - Each service uses H2 in-memory (`DB_CLOSE_DELAY=-1`) rather than file-backed H2 — data does
   not survive a process restart, which matches "in-memory" in the brief's own DB constraint.
-- Default ports `8080` (Gateway) and `8081` (Account Service), overridable via config/env —
+- Default ports `8082` (Gateway) and `8081` (Account Service), overridable via config/env —
   the brief doesn't mandate specific ports.
 - Trace propagation uses the standard W3C `traceparent` header (via Micrometer Tracing/OTel
   auto-instrumentation) rather than a custom header — chosen because it's the OpenTelemetry-
@@ -291,3 +291,5 @@ here rather than made silently. (Full rationale for the design-heavy ones is in
   matrix, API contracts, and configuration reference.
 - [Prompt.md](Prompt.md) — ordered, step-by-step build prompts with acceptance criteria for
   requirement/code/test coverage at each step.
+- [FIXES.md](FIXES.md) — running log of bugs found and corrected during implementation (e.g.
+  the account-creation race condition caught by the concurrency test), per build step.

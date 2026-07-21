@@ -47,7 +47,7 @@ the Gateway → Account Service call.
 
 ```
                           ┌──────────────────────────┐
-Browser / Client ───────▶ │  Event Gateway API :8080  │
+Browser / Client ───────▶ │  Event Gateway API :8082  │
                           │  - validation             │
                           │  - idempotency            │
                           │  - H2 (gateway-db)        │
@@ -371,7 +371,7 @@ resilience4j:
 ## 14. Docker Compose Plan
 
 - Two services: `account-service` (built from `account-service/Dockerfile`, port `8081`),
-  `event-gateway` (built from `event-gateway/Dockerfile`, port `8080`, env var
+  `event-gateway` (built from `event-gateway/Dockerfile`, port `8082`, env var
   `ACCOUNT_SERVICE_URL=http://account-service:8081`).
 - `account-service` exposes a Compose `healthcheck` hitting `/health`; `event-gateway`'s
   `depends_on: account-service: condition: service_healthy` so the Gateway doesn't race the
@@ -438,7 +438,7 @@ This ordering matches the step-by-step prompts in [Prompt.md](Prompt.md).
 
 | Key | Service | Purpose |
 |---|---|---|
-| `server.port` | both | `8080` gateway / `8081` account |
+| `server.port` | both | `8082` gateway / `8081` account |
 | `account-service.base-url` | gateway | e.g. `http://localhost:8081` (Compose overrides via env) |
 | `resilience4j.*` | gateway | see §12 |
 | `management.endpoints.web.base-path` | both | `/` so Actuator health serves at `/health` |

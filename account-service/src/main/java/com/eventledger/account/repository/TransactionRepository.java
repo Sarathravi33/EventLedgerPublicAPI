@@ -1,6 +1,7 @@
 package com.eventledger.account.repository;
 
 import com.eventledger.account.domain.Transaction;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,6 +17,8 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     boolean existsByEventId(String eventId);
 
     List<Transaction> findByAccountIdOrderByEventTimestampAsc(String accountId);
+
+    List<Transaction> findByAccountIdOrderByEventTimestampDesc(String accountId, Pageable pageable);
 
     @Query("SELECT COALESCE(SUM(CASE WHEN t.type = 'CREDIT' THEN t.amount ELSE -t.amount END), 0) "
             + "FROM Transaction t WHERE t.accountId = :accountId")

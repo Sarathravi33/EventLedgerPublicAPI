@@ -192,11 +192,19 @@ call, returning `503` with a clear message on failure.
 ### 6.2 Account Service (internal)
 
 **`POST /accounts/{accountId}/transactions`**
-Request: `{ "eventId": "...", "type": "CREDIT|DEBIT", "amount": 150.00, "currency": "USD", "eventTimestamp": "..." }`
-Response: `200/201` with `{ accountId, balance, transaction }`. Idempotent on `eventId`
-(§5.2) — replays return the same result without re-applying.
+Request: `{ "eventId": "...", "type": "CREDIT|DEBIT", "amount": 150.00, "eventTimestamp": "..." }`
+Response: `201` (newly applied) or `200` (idempotent replay of an already-applied `eventId`) with
+`{ accountId, balance, transaction }`. Idempotent on `eventId` (§5.2) — replays return the same
+result without re-applying.
 
-**`GET /accounts/{accountId}/balance`** → `{ accountId, balance, currency }`, `404` if unknown.
+Note: `currency` is deliberately **not** part of this internal contract, even though it's
+present on the public Gateway payload. The Account Service's balance is a unit-agnostic sum
+(§8) and never needs currency to compute or validate anything; the Gateway's `events` table is
+already the record of what currency each event was submitted in. Carrying an unused field
+across the internal boundary would suggest a consistency guarantee (e.g. per-account currency
+uniformity) that this system deliberately does not enforce — see §17.
+
+**`GET /accounts/{accountId}/balance`** → `{ accountId, balance }`, `404` if unknown.
 
 **`GET /accounts/{accountId}`** → account details + recent transactions (paged/limited).
 

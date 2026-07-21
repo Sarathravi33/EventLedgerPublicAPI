@@ -61,6 +61,7 @@ class AccountServiceTest {
         verify(accountRepository).applySignedAmount(eq(accountId), signedAmountCaptor.capture(), any(Instant.class));
         assertThat(signedAmountCaptor.getValue()).isEqualByComparingTo("150.00");
         assertThat(result.balance()).isEqualByComparingTo("150.0000");
+        assertThat(result.replayed()).isFalse();
     }
 
     @Test
@@ -95,6 +96,7 @@ class AccountServiceTest {
 
         assertThat(result.transaction()).isSameAs(existing);
         assertThat(result.balance()).isEqualByComparingTo("100.0000");
+        assertThat(result.replayed()).isTrue();
         verify(accountRepository, never()).applySignedAmount(any(), any(), any());
         verify(transactionRepository, never()).save(any());
         verify(accountProvisioningService, never()).createAccount(any(), any());

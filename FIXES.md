@@ -58,6 +58,27 @@ cached entity instead of the post-update row. Corrected to
 observable failure — caught during implementation review, not by a failing test, so it's
 recorded here for visibility rather than left implicit in the diff.
 
+## Step 3 — Account Service REST API
+
+**Contract/domain mismatch: `currency` had no home.** `IMPLEMENTATION_PLAN.md` §6.2 originally
+documented the Account Service's `POST /accounts/{accountId}/transactions` request as including
+`currency`, but the `Transaction` entity built in Step 1 has no currency column, and nothing in
+the Account Service's own responsibilities (computing an order-independent sum) ever needs it.
+Caught while wiring the real request DTO in this step, before writing any code around a field
+that would have been silently ignored. Resolved by dropping `currency` from the Account
+Service's *internal* contract entirely (it stays on the Gateway's public event payload and
+`events` table, where it's actually required) rather than adding an unused column or a
+misleading single-currency-per-account field. `IMPLEMENTATION_PLAN.md` §6.2 updated to match,
+with the reasoning recorded inline there.
+
+**Idempotent-replay status code needed a signal the service didn't expose.** To return `201`
+for a newly-applied transaction and `200` for a replay of an already-applied `eventId` (as
+`IMPLEMENTATION_PLAN.md` §6.1 specifies for the Gateway, and the same distinction is useful
+here), the controller needed to know which case it was in. `TransactionApplicationResult` was
+extended with a `replayed` boolean (`AccountService` already had both branches internally; it
+just wasn't surfacing which one ran). Existing Step 2 tests were updated to assert `replayed()`
+explicitly rather than just ignoring the new field.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

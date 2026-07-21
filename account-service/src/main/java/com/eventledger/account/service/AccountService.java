@@ -6,11 +6,13 @@ import com.eventledger.account.domain.TransactionType;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 @Service
 public class AccountService {
@@ -41,7 +43,7 @@ public class AccountService {
 
     private TransactionApplicationResult toExistingResult(Transaction existing) {
         Account account = getAccountOrThrow(existing.getAccountId());
-        return new TransactionApplicationResult(account.getAccountId(), account.getBalance(), existing);
+        return new TransactionApplicationResult(account.getAccountId(), account.getBalance(), existing, true);
     }
 
     private TransactionApplicationResult applyNewTransaction(String accountId, String eventId, TransactionType type,
@@ -56,7 +58,7 @@ public class AccountService {
                 new Transaction(eventId, accountId, type, amount, eventTimestamp, now));
 
         Account updated = getAccountOrThrow(accountId);
-        return new TransactionApplicationResult(accountId, updated.getBalance(), transaction);
+        return new TransactionApplicationResult(accountId, updated.getBalance(), transaction, false);
     }
 
     private void ensureAccountExists(String accountId, Instant now) {
@@ -79,5 +81,9 @@ public class AccountService {
     public Account getAccountOrThrow(String accountId) {
         return accountRepository.findById(accountId)
                 .orElseThrow(() -> new AccountNotFoundException(accountId));
+    }
+
+    public List<Transaction> getRecentTransactions(String accountId, int limit) {
+        return transactionRepository.findByAccountIdOrderByEventTimestampDesc(accountId, PageRequest.of(0, limit));
     }
 }

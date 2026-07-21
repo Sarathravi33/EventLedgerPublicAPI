@@ -1,12 +1,15 @@
 package com.eventledger.gateway.client;
 
 import com.eventledger.gateway.domain.EventType;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiter;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import jakarta.annotation.PreDestroy;
@@ -43,16 +46,19 @@ public class ResilientAccountServiceClient implements AccountServiceClient {
     private final TimeLimiter timeLimiter;
     private final Retry retry;
     private final CircuitBreaker circuitBreaker;
+    private final MeterRegistry meterRegistry;
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public ResilientAccountServiceClient(RestAccountServiceClient delegate,
                                           TimeLimiterRegistry timeLimiterRegistry,
                                           RetryRegistry retryRegistry,
-                                          CircuitBreakerRegistry circuitBreakerRegistry) {
+                                          CircuitBreakerRegistry circuitBreakerRegistry,
+                                          MeterRegistry meterRegistry) {
         this.delegate = delegate;
         this.timeLimiter = timeLimiterRegistry.timeLimiter("accountService");
         this.retry = retryRegistry.retry("accountService");
         this.circuitBreaker = circuitBreakerRegistry.circuitBreaker("accountService");
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -89,10 +95,17 @@ public class ResilientAccountServiceClient implements AccountServiceClient {
         Callable<T> withRetry = Retry.decorateCallable(retry, timeLimited);
         Callable<T> withCircuitBreaker = CircuitBreaker.decorateCallable(circuitBreaker, withRetry);
 
+        Timer.Sample sample = Timer.start(meterRegistry);
         try {
-            return withCircuitBreaker.call();
+            T result = withCircuitBreaker.call();
+            sample.stop(Timer.builder("gateway.account_service.call.duration")
+                    .tag("outcome", "success").register(meterRegistry));
+            return result;
         } catch (Exception e) {
             Throwable cause = (e instanceof ExecutionException && e.getCause() != null) ? e.getCause() : e;
+            String outcome = cause instanceof CallNotPermittedException ? "circuit_open" : "failure";
+            sample.stop(Timer.builder("gateway.account_service.call.duration")
+                    .tag("outcome", outcome).register(meterRegistry));
             if (cause instanceof AccountNotFoundException notFound) {
                 throw notFound;
             }

@@ -75,8 +75,8 @@ for the full list):
 | Gateway port | `8082` | `server.port` |
 | Account Service port | `8081` | `server.port` |
 | Account Service URL (as seen by Gateway) | `http://localhost:8081` | overridden to `http://account-service:8081` in Docker Compose |
-| Health endpoint | `/health` on both services | remapped from Actuator's default `/actuator/health` |
-| Metrics endpoint | `/actuator/prometheus`, `/actuator/metrics` | both services |
+| Health endpoint | `/health` on both services | remapped from Actuator's default `/actuator/health` — this remap moves all actuator endpoints to root, so metrics/prometheus lose the `/actuator` prefix too |
+| Metrics endpoint | `/metrics`, `/prometheus` | both services |
 
 ## Running with Docker Compose (preferred)
 
@@ -199,10 +199,14 @@ for the full rationale.
 - **Structured logs**: JSON on stdout, fields include `timestamp`, `level`, `service`,
   `traceId`, `spanId`, `logger`, `message`.
 - **Metrics**: `gateway.events.received` (by type/outcome), `gateway.account_service.call.duration`,
-  circuit breaker state, `account.transactions.applied`, `account.transaction.apply.duration` —
-  exposed at `/actuator/prometheus` and `/actuator/metrics` on both services.
-- **Health**: `GET /health` on both services reports DB connectivity; the Gateway additionally
-  reports (informationally, non-fatally) whether the Account Service is currently reachable.
+  `resilience4j.circuitbreaker.state` (auto-bound by Resilience4j — no custom code needed),
+  `account.transactions.applied`, `account.transaction.apply.duration` — exposed at `/metrics`
+  and `/prometheus` on both services (e.g. `curl http://localhost:8082/metrics/gateway.events.received`).
+- **Health**: `GET /health` on both services reports DB connectivity (`show-details: always`);
+  the Gateway additionally reports, as a non-fatal `accountService` sub-component, whether the
+  Account Service is currently reachable — that component's own status is always `UP` (only its
+  `reachable` detail varies), so a downstream outage is visible without ever flipping the
+  Gateway's overall health to `DOWN`.
 
 ## Running Tests & Coverage
 

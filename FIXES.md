@@ -234,6 +234,20 @@ gone. Coverage tests wouldn't have caught this — they construct the encoder di
 than parsing real Logback context properties — which is why the manual-run check the step
 calls for still matters even with an automated test in place.
 
+## Step 10 — Metrics and health endpoints
+
+No real bugs this step — the one thing worth recording is a plan correction caught before
+writing unnecessary code. `IMPLEMENTATION_PLAN.md` §11 originally sketched a custom
+`gateway.circuit_breaker.state` gauge "via Resilience4j Micrometer binder." While implementing
+it, a quick `curl http://localhost:8082/metrics` against a running instance (after just adding
+`resilience4j-spring-boot3` back in Step 7 — no new code) showed `resilience4j.circuitbreaker.state`,
+`.calls`, `.failure.rate`, `.not.permitted.calls`, and the retry/time-limiter equivalents were
+*already* populated. `resilience4j-spring-boot3` auto-binds all of these to any `MeterRegistry`
+present on the classpath — writing a custom gauge would have been a redundant reimplementation.
+Updated §11 to reference the real metric name instead. All five required/recommended metrics,
+plus both health scenarios (Account Service reachable and unreachable), were verified against
+real running services via `curl`, not just the automated tests.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

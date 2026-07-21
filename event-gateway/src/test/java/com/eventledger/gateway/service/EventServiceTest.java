@@ -8,6 +8,7 @@ import com.eventledger.gateway.domain.Event;
 import com.eventledger.gateway.domain.EventStatus;
 import com.eventledger.gateway.domain.EventType;
 import com.eventledger.gateway.repository.EventRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +44,7 @@ class EventServiceTest {
     void setUp() {
         accountServiceClient = mock(AccountServiceClient.class);
         Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
-        eventService = new EventService(eventRepository, accountServiceClient, validator);
+        eventService = new EventService(eventRepository, accountServiceClient, validator, new SimpleMeterRegistry());
     }
 
     // ---- Validation matrix ----

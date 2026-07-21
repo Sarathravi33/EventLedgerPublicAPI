@@ -313,27 +313,46 @@ success would double-credit or double-debit an account.
 
 ## 11. Metrics & Health Design
 
-**Metrics** (Micrometer, exposed at `/actuator/prometheus` and `/actuator/metrics`):
+**Metrics** (Micrometer, exposed at `/metrics` and `/prometheus` — see the health note below
+on why these paths lack the usual `/actuator` prefix):
 
 | Metric | Type | Tags | Service |
 |---|---|---|---|
 | `gateway.events.received` | counter | `type`, `outcome` (created/duplicate/rejected/failed) | Gateway |
 | `gateway.account_service.call.duration` | timer | `outcome` (success/failure/circuit_open) | Gateway |
-| `gateway.circuit_breaker.state` | gauge (via Resilience4j Micrometer binder) | `state` | Gateway |
+| `resilience4j.circuitbreaker.state` | gauge | `state`, `name` | Gateway |
 | `account.transactions.applied` | counter | `type` | Account Service |
 | `account.transaction.apply.duration` | timer | — | Account Service |
+
+The circuit breaker state gauge needed no custom code at all — `resilience4j-spring-boot3`
+(already a dependency for §12) auto-binds it (and `resilience4j.circuitbreaker.calls`,
+`.failure.rate`, `.not.permitted.calls`, plus retry/time-limiter equivalents) to the
+`MeterRegistry` the moment one is present on the classpath; the original sketch of a custom
+`gateway.circuit_breaker.state` gauge would have been a redundant reimplementation of something
+already provided. All five metrics above were verified populated via `curl` against real
+running services after exercising each code path at least once.
 
 At minimum one metric (`gateway.events.received`) satisfies requirement 4's "at least one
 custom metric"; the rest are included because they're needed anyway to observe the resiliency
 pattern in §12.
 
 **Health**: Actuator remapped so `/health` (not `/actuator/health`) is the literal path, via
-`management.endpoints.web.base-path=/` + `path-mapping.health=health`. Each service reports its
-own H2 connectivity (standard `DataSourceHealthIndicator`). The Gateway additionally exposes a
-non-fatal `accountService` component (custom `HealthIndicator` pinging the Account Service's
-`/health` with a short timeout) — informational only, does **not** flip the Gateway's overall
-status to `DOWN`, so `/health` on the Gateway stays truthful about the Gateway's own liveness
-even while correctly reporting the downstream outage.
+`management.endpoints.web.base-path: /` (which, as a side effect, also moves every other
+exposed actuator endpoint to root — `/metrics`, `/prometheus` — rather than only remapping
+`health` specifically; simpler than trying to remap one endpoint while leaving the rest under
+`/actuator`, and the brief only requires the `/health` path literally). Each service reports
+its own H2 connectivity via the standard `DataSourceHealthIndicator` (`show-details: always`
+is required for this to actually appear in the response body). The Gateway additionally
+exposes a non-fatal `accountService` component (`AccountServiceHealthIndicator`, pinging the
+Account Service's `/health` via the plain, non-resilience-wrapped `RestClient` bean — a health
+probe shouldn't share a failure budget with business calls or be blocked by a circuit it didn't
+open) — implemented by **always** returning `Health.up()` for this component's own status
+(Spring Boot's health aggregation has no built-in "informational, doesn't affect the aggregate"
+toggle for components within the same group/endpoint) while varying only the `reachable`
+detail field based on the actual ping outcome. This keeps `/health` on the Gateway truthful
+about the Gateway's own liveness even while correctly surfacing the downstream outage.
+Verified live: with the Account Service running, `details.reachable: true`; with it stopped,
+`details.reachable: false` and overall `status` stays `UP` either way.
 
 ## 12. Resiliency Design (Gateway → Account Service)
 

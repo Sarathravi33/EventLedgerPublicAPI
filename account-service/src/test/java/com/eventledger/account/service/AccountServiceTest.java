@@ -5,6 +5,7 @@ import com.eventledger.account.domain.Transaction;
 import com.eventledger.account.domain.TransactionType;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -41,7 +42,8 @@ class AccountServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        accountService = new AccountService(accountRepository, transactionRepository, accountProvisioningService);
+        accountService = new AccountService(accountRepository, transactionRepository, accountProvisioningService,
+                new SimpleMeterRegistry());
     }
 
     @Test

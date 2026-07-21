@@ -5,6 +5,9 @@ import com.eventledger.account.domain.Transaction;
 import com.eventledger.account.domain.TransactionType;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,12 +27,14 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final AccountProvisioningService accountProvisioningService;
+    private final MeterRegistry meterRegistry;
 
     public AccountService(AccountRepository accountRepository, TransactionRepository transactionRepository,
-                           AccountProvisioningService accountProvisioningService) {
+                           AccountProvisioningService accountProvisioningService, MeterRegistry meterRegistry) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.accountProvisioningService = accountProvisioningService;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -40,9 +45,14 @@ public class AccountService {
     @Transactional
     public TransactionApplicationResult applyTransaction(String accountId, String eventId, TransactionType type,
                                                            BigDecimal amount, Instant eventTimestamp) {
-        return transactionRepository.findByEventId(eventId)
-                .map(this::toExistingResult)
-                .orElseGet(() -> applyNewTransaction(accountId, eventId, type, amount, eventTimestamp));
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            return transactionRepository.findByEventId(eventId)
+                    .map(this::toExistingResult)
+                    .orElseGet(() -> applyNewTransaction(accountId, eventId, type, amount, eventTimestamp));
+        } finally {
+            sample.stop(Timer.builder("account.transaction.apply.duration").register(meterRegistry));
+        }
     }
 
     private TransactionApplicationResult toExistingResult(Transaction existing) {
@@ -66,6 +76,7 @@ public class AccountService {
         Account updated = getAccountOrThrow(accountId);
         log.info("Applied {} transaction {} to account {}; new balance {}", type, eventId, accountId,
                 updated.getBalance());
+        Counter.builder("account.transactions.applied").tag("type", type.name()).register(meterRegistry).increment();
         return new TransactionApplicationResult(accountId, updated.getBalance(), transaction, false);
     }
 

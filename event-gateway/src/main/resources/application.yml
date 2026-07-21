@@ -24,6 +24,17 @@ management:
   tracing:
     sampling:
       probability: 1.0
+  endpoints:
+    web:
+      # Actuator endpoints move to root, so "health" is served at the literal path /health
+      # rather than /actuator/health — the brief asks for GET /health specifically. Metrics
+      # and prometheus move to /metrics and /prometheus for the same reason.
+      base-path: /
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
 
 resilience4j:
   timelimiter:

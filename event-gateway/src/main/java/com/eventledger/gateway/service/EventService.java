@@ -6,7 +6,10 @@ import com.eventledger.gateway.client.AccountServiceCallException;
 import com.eventledger.gateway.client.AccountServiceClient;
 import com.eventledger.gateway.domain.Event;
 import com.eventledger.gateway.domain.EventStatus;
+import com.eventledger.gateway.domain.EventType;
 import com.eventledger.gateway.repository.EventRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import org.slf4j.Logger;
@@ -25,12 +28,14 @@ public class EventService {
     private final EventRepository eventRepository;
     private final AccountServiceClient accountServiceClient;
     private final Validator validator;
+    private final MeterRegistry meterRegistry;
 
     public EventService(EventRepository eventRepository, AccountServiceClient accountServiceClient,
-                         Validator validator) {
+                         Validator validator, MeterRegistry meterRegistry) {
         this.eventRepository = eventRepository;
         this.accountServiceClient = accountServiceClient;
         this.validator = validator;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -42,7 +47,12 @@ public class EventService {
      * database transaction open at all.
      */
     public EventSubmissionResult submit(EventRequest request) {
-        validate(request);
+        try {
+            validate(request);
+        } catch (EventValidationException e) {
+            recordReceived(request.type(), "rejected");
+            throw e;
+        }
         log.info("Received event {} for account {} ({} {})", request.eventId(), request.accountId(),
                 request.type(), request.amount());
 
@@ -64,6 +74,7 @@ public class EventService {
     private EventSubmissionResult handleExisting(Event event) {
         if (event.getStatus() == EventStatus.APPLIED) {
             log.info("Duplicate submission of already-applied event {}; returning stored result", event.getEventId());
+            recordReceived(event.getType(), "duplicate");
             return new EventSubmissionResult(event, true);
         }
         // FAILED (Account Service was unreachable last time): a resubmission of the same
@@ -85,13 +96,23 @@ public class EventService {
                     event.getAmount(), event.getEventTimestamp());
             event.markApplied();
             log.info("Applied event {} to account {}", event.getEventId(), event.getAccountId());
+            recordReceived(event.getType(), "created");
         } catch (AccountServiceCallException e) {
             event.markFailed(e.getMessage());
             log.warn("Failed to apply event {} to account {}: {}", event.getEventId(), event.getAccountId(),
                     e.getMessage());
+            recordReceived(event.getType(), "failed");
         }
         eventRepository.save(event);
         return new EventSubmissionResult(event, false);
+    }
+
+    private void recordReceived(EventType type, String outcome) {
+        Counter.builder("gateway.events.received")
+                .tag("type", type != null ? type.name() : "UNKNOWN")
+                .tag("outcome", outcome)
+                .register(meterRegistry)
+                .increment();
     }
 
     public Event getByEventIdOrThrow(String eventId) {

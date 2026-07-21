@@ -248,6 +248,44 @@ Updated §11 to reference the real metric name instead. All five required/recomm
 plus both health scenarios (Account Service reachable and unreachable), were verified against
 real running services via `curl`, not just the automated tests.
 
+## Step 11 — Dockerization
+
+**Design decision, made proactively: each Dockerfile is self-contained despite the multi-module
+reactor.** `event-gateway` declares a test-scope dependency on `account-service` (Step 6), which
+means a naive `event-gateway/Dockerfile` that only copies `event-gateway/src` would fail —
+Maven resolves that test-scope dependency during the build regardless of whether tests actually
+run, and with no `account-service` artifact reachable (fresh container, no remote repo hosting
+a private artifact), the build breaks unless `account-service` is buildable within the *same*
+reactor invocation. Rather than rely on `docker compose build`'s (unordered, effectively
+parallel) build sequence to have already produced an `account-service` image or published
+artifact, `event-gateway/Dockerfile` copies both modules' full sources and uses `mvn -pl
+event-gateway -am package` — Maven builds `account-service` first within this one self-contained
+build stage, and only `event-gateway`'s jar is copied into the final runtime image. Slightly
+heavier (rebuilds `account-service` as a byproduct) but correct regardless of build ordering
+assumptions. `-Dmaven.test.skip=true` (not just `-DskipTests`) is used in both Dockerfiles so
+test *compilation* is skipped too, not just execution.
+
+**Verified live in Docker Compose, not just in unit tests**: full happy-path flow (submit →
+201 → balance reflects it), then `docker compose stop account-service` while `event-gateway`
+kept running — `POST /events` returned `503` with the event still recorded (status `FAILED`,
+retrievable), `GET /events/{id}` and `GET /events?account=` were completely unaffected, the
+balance proxy returned `503`, and `/health` stayed `UP` overall with
+`accountService.reachable: false` — reproducing exactly the behavior the Step 7/10 unit tests
+already proved, this time with two real, separately-orchestrated Docker containers rather than
+mocks.
+
+**Observed (not a bug): balance came back `-10.00` instead of the expected `65.00` after
+restarting Account Service and retrying the failed event.** `docker compose stop`/`start`
+restarts the Account Service's JVM process entirely (confirmed via its logs — a full fresh
+Spring Boot startup sequence), and H2 in-memory data does not survive a process restart — this
+is the documented consequence of choosing in-memory H2 (`IMPLEMENTATION_PLAN.md` §17, README
+assumptions), not a resiliency defect. The retried `DEBIT` event applied correctly against a
+freshly-recreated (previously nonexistent, balance-zero) account, landing at exactly
+`0 - 10 = -10`. Worth recording here specifically because a from-scratch container restart
+during manual testing is a harsher failure mode than the "still running but erroring/slow"
+scenario the WireMock-based tests simulate, and the resulting number could otherwise look like
+a bug to someone reproducing this smoke test without this context.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

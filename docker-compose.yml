@@ -1,0 +1,39 @@
+services:
+  account-service:
+    build:
+      context: .
+      dockerfile: account-service/Dockerfile
+    ports:
+      - "8081:8081"
+    networks:
+      - event-ledger
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  event-gateway:
+    build:
+      context: .
+      dockerfile: event-gateway/Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      # Spring Boot's relaxed property binding maps this env var to the account-service.base-url
+      # property in event-gateway/application.yml, overriding the localhost:8081 default so the
+      # Gateway reaches the Account Service by its Compose service name instead.
+      - ACCOUNT_SERVICE_BASE_URL=http://account-service:8081
+    networks:
+      - event-ledger
+    depends_on:
+      account-service:
+        # Only a startup-ordering convenience — the Gateway's own resiliency (circuit breaker +
+        # timeout, §12) must still hold if the Account Service goes down *after* both are up;
+        # this just avoids racing the Account Service on cold start.
+        condition: service_healthy
+
+networks:
+  event-ledger:
+    driver: bridge

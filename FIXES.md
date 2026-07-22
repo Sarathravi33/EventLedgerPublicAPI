@@ -344,6 +344,51 @@ covers every category the brief asks for, including a full Gateway → Account S
 integration test, and runs via the standard `mvn test`/`mvn verify` commands; and this README
 has now been reconciled against the actual, final behavior of the system.
 
+## Post-Step-12 — Swagger/OpenAPI documentation + Postman collection
+
+**Adding springdoc-openapi caused a real, reproducible test regression.**
+`AccountServiceResiliencyTest.postEvents_whenCircuitIsOpen_returns503NotHangingOrErroring`
+started failing consistently (not flaking) at ~1.15-1.2s against a `<1000ms` bound, immediately
+after adding `springdoc-openapi-starter-webmvc-ui` to `event-gateway` — reproduced in isolation,
+not just under full-suite load. Root cause: this test's timed assertion happened to run on the
+*first* real HTTP request dispatched into that test class's Spring context, and that one-time
+`DispatcherServlet`/`HandlerMapping` initialization cost (larger now that springdoc registers
+additional request mappings for `/v3/api-docs` and the Swagger UI) was being counted as part of
+"how fast does an open circuit fail" — a timing assertion inadvertently measuring cold-start
+overhead instead of the actual behavior under test. Fixed by issuing one untimed warm-up request
+(`GET /health`) before starting the timer, so the measured window reflects only the real request.
+Re-ran in isolation and under the full suite afterward — passes consistently both ways.
+
+## Post-Step-12 — README manual-run instructions were missing a required install step
+
+**Writing the step-by-step "How to Run" guide surfaced a real gap in the existing manual-run
+instructions.** The old "Running Manually" section jumped straight to `mvn -pl event-gateway
+spring-boot:run` without ever installing `account-service` first. Root cause: `event-gateway`
+declares a **test-scope** Maven dependency on `account-service`'s artifact (see Step 6), and
+`spring-boot:run` forks the Maven lifecycle through `test-compile` — not just `compile` — so even
+running (not just building) `event-gateway` on its own requires `account-service` to already be
+resolvable from the local `~/.m2` repository. On a fresh checkout, or any machine that hasn't built
+the reactor at least once, following the old instructions literally would fail.
+
+Verified empirically rather than assumed: moved the already-built `account-service` artifact aside
+in the local Maven repository, then ran `mvn -pl event-gateway spring-boot:run` from the repo
+root — it failed immediately with
+
+```
+[WARNING] The POM for com.eventledger:account-service:jar:0.1.0-SNAPSHOT is missing, no dependency information available
+[ERROR] Failed to execute goal on project event-gateway: Could not resolve dependencies for project com.eventledger:event-gateway:jar:0.1.0-SNAPSHOT: The following artifacts could not be resolved: com.eventledger:account-service:jar:0.1.0-SNAPSHOT (absent)
+```
+
+confirming the fork-through-`test-compile` behavior. Restored the artifact, then re-ran the
+corrected sequence — `mvn clean install -DskipTests` from the repo root, followed by
+`mvn -pl event-gateway spring-boot:run` — and this time it started cleanly
+(`Started EventGatewayApplication in 6.526 seconds`, Tomcat on port 8082).
+
+**Fix:** README.md's manual-run instructions (Option B) now require `mvn clean install -DskipTests`
+from the repository root as an explicit, called-out step before running either service
+individually, with the reason (the test-scope dependency) stated inline so it isn't skipped as
+boilerplate.
+
 ## Cross-cutting: Event Gateway default port changed 8080 → 8082
 
 Following on from the Step 0 port conflict above, the Event Gateway's default port was changed

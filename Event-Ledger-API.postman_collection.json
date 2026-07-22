@@ -1,0 +1,1043 @@
+{
+  "info": {
+    "_postman_id": "6f2a8d3e-6b1a-4a2f-9d4e-2e7a1c9f0a11",
+    "name": "Event Ledger API",
+    "description": "Collection for both services in the Event Ledger system.\n\nPrerequisites: both services must be running — either `docker compose up --build` from the repo root, or `mvn -pl account-service spring-boot:run` and `mvn -pl event-gateway spring-boot:run` in two terminals.\n\nDefault base URLs (override via the collection variables if running elsewhere):\n- Event Gateway (public): http://localhost:8082\n- Account Service (internal): http://localhost:8081\n\nEach request that asserts a status code carries a Postman test script, so this collection can be run end-to-end (Collection Runner / Newman) as a smoke test, not just used for manual demo clicks. Requests that submit a fixed eventId are deliberately idempotent-friendly: re-running the collection is expected to show 200 (duplicate replay) on the second pass instead of 201 — that IS the idempotency behavior being demonstrated, not a failure.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "gatewayBaseUrl", "value": "http://localhost:8082", "type": "string" },
+    { "key": "accountServiceBaseUrl", "value": "http://localhost:8081", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "01 - Event Gateway (public)",
+      "item": [
+        {
+          "name": "Happy Path",
+          "item": [
+            {
+              "name": "Submit New Event (CREDIT)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 201 (new) or 200 (duplicate replay on a rerun)', function () {",
+                      "    pm.expect([200, 201]).to.include(pm.response.code);",
+                      "});",
+                      "pm.test('Response body has the submitted eventId', function () {",
+                      "    pm.expect(pm.response.json().eventId).to.eql('evt-postman-credit-001');",
+                      "});",
+                      "pm.test('Event status is APPLIED', function () {",
+                      "    pm.expect(pm.response.json().status).to.eql('APPLIED');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-credit-001\", \"accountId\": \"acct-postman-1\", \"type\": \"CREDIT\", \"amount\": 150.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\", \"metadata\": {\"source\": \"postman\", \"batchId\": \"B-9042\"}}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                },
+                "description": "Submits a new CREDIT event. Run twice to see idempotent replay: 201 then 200 with the exact same stored record."
+              },
+              "response": []
+            },
+            {
+              "name": "Submit New Event (DEBIT)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 201 or 200', function () {",
+                      "    pm.expect([200, 201]).to.include(pm.response.code);",
+                      "});",
+                      "pm.test('Event type is DEBIT', function () {",
+                      "    pm.expect(pm.response.json().type).to.eql('DEBIT');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-debit-001\", \"accountId\": \"acct-postman-1\", \"type\": \"DEBIT\", \"amount\": 40.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T15:00:00Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                },
+                "description": "Submits a DEBIT event for the same account, without metadata (metadata is optional)."
+              },
+              "response": []
+            },
+            {
+              "name": "Submit Out-of-Order Event (earlier timestamp, sent last)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 201 or 200', function () {",
+                      "    pm.expect([200, 201]).to.include(pm.response.code);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-early-001\", \"accountId\": \"acct-postman-1\", \"type\": \"CREDIT\", \"amount\": 10.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T13:00:00Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                },
+                "description": "eventTimestamp (13:00) is earlier than both events above, but this is physically the third request sent. Run 'List Events For Account' afterward to see it correctly sorted first — demonstrating out-of-order tolerance."
+              },
+              "response": []
+            },
+            {
+              "name": "Get Event By Id",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('eventId matches', function () { pm.expect(pm.response.json().eventId).to.eql('evt-postman-credit-001'); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events/evt-postman-credit-001",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events", "evt-postman-credit-001" ]
+                },
+                "description": "Pure local read — works even if the Account Service is down."
+              },
+              "response": []
+            },
+            {
+              "name": "List Events For Account (chronological order)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Response is an array', function () { pm.expect(pm.response.json()).to.be.an('array'); });",
+                      "pm.test('Events are sorted by eventTimestamp ascending', function () {",
+                      "    var events = pm.response.json();",
+                      "    for (var i = 1; i < events.length; i++) {",
+                      "        pm.expect(new Date(events[i].eventTimestamp).getTime())",
+                      "          .to.be.at.least(new Date(events[i - 1].eventTimestamp).getTime());",
+                      "    }",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events?account=acct-postman-1",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ],
+                  "query": [ { "key": "account", "value": "acct-postman-1" } ]
+                },
+                "description": "Ordered by eventTimestamp, not submission order — run this after the three 'Submit' requests above to see the out-of-order event correctly placed first."
+              },
+              "response": []
+            },
+            {
+              "name": "Get Balance (Gateway proxy)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Response has accountId and balance', function () {",
+                      "    var body = pm.response.json();",
+                      "    pm.expect(body.accountId).to.eql('acct-postman-1');",
+                      "    pm.expect(body.balance).to.be.a('number');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/accounts/acct-postman-1/balance",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-1", "balance" ]
+                },
+                "description": "Proxies to the Account Service. Returns 503 with a clear message if the Account Service is unreachable — try stopping it to see this."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Idempotency",
+          "item": [
+            {
+              "name": "Submit Duplicate Event (expect 200, not a new row)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 (idempotent replay)', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Returns the original stored eventId', function () {",
+                      "    pm.expect(pm.response.json().eventId).to.eql('evt-postman-credit-001');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-credit-001\", \"accountId\": \"acct-postman-1\", \"type\": \"CREDIT\", \"amount\": 150.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                },
+                "description": "Run 'Submit New Event (CREDIT)' first, then this — identical eventId returns the original record and does not double-apply the balance."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Validation Errors",
+          "item": [
+            {
+              "name": "Missing eventId (expect 400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });",
+                      "pm.test('Field error mentions eventId', function () {",
+                      "    var errors = pm.response.json().errors || [];",
+                      "    pm.expect(errors.some(function (e) { return e.field === 'eventId'; })).to.be.true;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"accountId\": \"acct-postman-1\", \"type\": \"CREDIT\", \"amount\": 10.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Negative Amount (expect 400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-neg-amount\", \"accountId\": \"acct-postman-1\", \"type\": \"CREDIT\", \"amount\": -5.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Zero Amount (expect 400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-zero-amount\", \"accountId\": \"acct-postman-1\", \"type\": \"CREDIT\", \"amount\": 0, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Unknown Event Type (expect 400 Malformed Request)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });",
+                      "pm.test('Title is Malformed Request', function () {",
+                      "    pm.expect(pm.response.json().title).to.eql('Malformed Request');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-bad-type\", \"accountId\": \"acct-postman-1\", \"type\": \"REFUND\", \"amount\": 10.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                },
+                "description": "'REFUND' is not a valid type (must be CREDIT or DEBIT) — fails at JSON deserialization, before validation even runs."
+              },
+              "response": []
+            },
+            {
+              "name": "Missing accountId (expect 400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-postman-no-account\", \"type\": \"CREDIT\", \"amount\": 10.00, \"currency\": \"USD\", \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events" ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Not Found",
+          "item": [
+            {
+              "name": "Get Event By Id - Unknown (expect 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('Title is Event Not Found', function () {",
+                      "    pm.expect(pm.response.json().title).to.eql('Event Not Found');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/events/does-not-exist",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "events", "does-not-exist" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Balance - Unknown Account (expect 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/accounts/acct-never-existed/balance",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "accounts", "acct-never-existed", "balance" ]
+                },
+                "description": "An account that has genuinely never received a transaction — distinct from the Account-Service-unreachable case, which returns 503 instead."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Health, Metrics & API Docs",
+          "item": [
+            {
+              "name": "Health Check",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Overall status is UP', function () { pm.expect(pm.response.json().status).to.eql('UP'); });",
+                      "pm.test('accountService component is present', function () {",
+                      "    pm.expect(pm.response.json().components).to.have.property('accountService');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{gatewayBaseUrl}}/health", "host": [ "{{gatewayBaseUrl}}" ], "path": [ "health" ] },
+                "description": "Overall status stays UP even if the Account Service is down — check components.accountService.details.reachable."
+              },
+              "response": []
+            },
+            {
+              "name": "All Metrics",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{gatewayBaseUrl}}/metrics", "host": [ "{{gatewayBaseUrl}}" ], "path": [ "metrics" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "Metric - gateway.events.received",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/metrics/gateway.events.received",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "metrics", "gateway.events.received" ]
+                },
+                "description": "Counter tagged by type/outcome (created, duplicate, rejected, failed). Run some of the requests above first, then check this."
+              },
+              "response": []
+            },
+            {
+              "name": "Metric - gateway.account_service.call.duration",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/metrics/gateway.account_service.call.duration",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "metrics", "gateway.account_service.call.duration" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Metric - resilience4j.circuitbreaker.state",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayBaseUrl}}/metrics/resilience4j.circuitbreaker.state",
+                  "host": [ "{{gatewayBaseUrl}}" ],
+                  "path": [ "metrics", "resilience4j.circuitbreaker.state" ]
+                },
+                "description": "Auto-bound by Resilience4j — no custom code needed for this one."
+              },
+              "response": []
+            },
+            {
+              "name": "Prometheus Scrape Endpoint",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{gatewayBaseUrl}}/prometheus", "host": [ "{{gatewayBaseUrl}}" ], "path": [ "prometheus" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "OpenAPI Spec (JSON)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{gatewayBaseUrl}}/v3/api-docs", "host": [ "{{gatewayBaseUrl}}" ], "path": [ "v3", "api-docs" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "OpenAPI Spec (YAML)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{gatewayBaseUrl}}/v3/api-docs.yaml", "host": [ "{{gatewayBaseUrl}}" ], "path": [ "v3", "api-docs.yaml" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "Swagger UI",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{gatewayBaseUrl}}/swagger-ui.html", "host": [ "{{gatewayBaseUrl}}" ], "path": [ "swagger-ui.html" ] },
+                "description": "Open this one in a browser, not just Postman, to interactively try requests from the generated docs UI."
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Account Service (internal)",
+      "item": [
+        {
+          "name": "Happy Path",
+          "item": [
+            {
+              "name": "Apply Transaction (CREDIT)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 201 (new) or 200 (duplicate replay on a rerun)', function () {",
+                      "    pm.expect([200, 201]).to.include(pm.response.code);",
+                      "});",
+                      "pm.test('Response has accountId and balance', function () {",
+                      "    var body = pm.response.json();",
+                      "    pm.expect(body.accountId).to.eql('acct-postman-direct-1');",
+                      "    pm.expect(body.balance).to.be.a('number');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-direct-credit-001\", \"type\": \"CREDIT\", \"amount\": 200.00, \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1/transactions",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1", "transactions" ]
+                },
+                "description": "Calling the Account Service directly (bypassing the Gateway) — the account is created automatically since it's the first transaction. Note: no 'currency' field here; that's Gateway-only (see FIXES.md/IMPLEMENTATION_PLAN.md §6.2 for why)."
+              },
+              "response": []
+            },
+            {
+              "name": "Apply Transaction (DEBIT)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 201 or 200', function () {",
+                      "    pm.expect([200, 201]).to.include(pm.response.code);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-direct-debit-001\", \"type\": \"DEBIT\", \"amount\": 50.00, \"eventTimestamp\": \"2026-05-15T15:00:00Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1/transactions",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1", "transactions" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Balance",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Balance is 150.00 (200 credit - 50 debit)', function () {",
+                      "    pm.expect(pm.response.json().balance).to.equal(150.0000);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1/balance",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1", "balance" ]
+                },
+                "description": "Expect exactly 150.00 after running the CREDIT (200) and DEBIT (50) requests above, in either order — balance is order-independent by design."
+              },
+              "response": []
+            },
+            {
+              "name": "Get Account Details (with recent transactions)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Has a transactions array', function () {",
+                      "    pm.expect(pm.response.json().transactions).to.be.an('array');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1" ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Idempotency",
+          "item": [
+            {
+              "name": "Apply Duplicate Transaction (expect 200, balance unchanged)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 (idempotent replay)', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-direct-credit-001\", \"type\": \"CREDIT\", \"amount\": 200.00, \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1/transactions",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1", "transactions" ]
+                },
+                "description": "Same eventId as 'Apply Transaction (CREDIT)' above — must not double-apply."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Validation Errors",
+          "item": [
+            {
+              "name": "Missing eventId (expect 400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"type\": \"CREDIT\", \"amount\": 10.00, \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1/transactions",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1", "transactions" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Zero Amount (expect 400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [ { "key": "Content-Type", "value": "application/json" } ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"eventId\": \"evt-direct-zero-amount\", \"type\": \"CREDIT\", \"amount\": 0, \"eventTimestamp\": \"2026-05-15T14:02:11Z\"}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-postman-direct-1/transactions",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-postman-direct-1", "transactions" ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Not Found",
+          "item": [
+            {
+              "name": "Get Balance - Unknown Account (expect 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404', function () { pm.response.to.have.status(404); });",
+                      "pm.test('Title is Account Not Found', function () {",
+                      "    pm.expect(pm.response.json().title).to.eql('Account Not Found');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-never-existed/balance",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-never-existed", "balance" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Account Details - Unknown Account (expect 404)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/accounts/acct-never-existed",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "accounts", "acct-never-existed" ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Health, Metrics & API Docs",
+          "item": [
+            {
+              "name": "Health Check",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Overall status is UP', function () { pm.expect(pm.response.json().status).to.eql('UP'); });",
+                      "pm.test('db component is present', function () {",
+                      "    pm.expect(pm.response.json().components).to.have.property('db');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{accountServiceBaseUrl}}/health", "host": [ "{{accountServiceBaseUrl}}" ], "path": [ "health" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "All Metrics",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{accountServiceBaseUrl}}/metrics", "host": [ "{{accountServiceBaseUrl}}" ], "path": [ "metrics" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "Metric - account.transactions.applied",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/metrics/account.transactions.applied",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "metrics", "account.transactions.applied" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Metric - account.transaction.apply.duration",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{accountServiceBaseUrl}}/metrics/account.transaction.apply.duration",
+                  "host": [ "{{accountServiceBaseUrl}}" ],
+                  "path": [ "metrics", "account.transaction.apply.duration" ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Prometheus Scrape Endpoint",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{accountServiceBaseUrl}}/prometheus", "host": [ "{{accountServiceBaseUrl}}" ], "path": [ "prometheus" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "OpenAPI Spec (JSON)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{accountServiceBaseUrl}}/v3/api-docs", "host": [ "{{accountServiceBaseUrl}}" ], "path": [ "v3", "api-docs" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "OpenAPI Spec (YAML)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{accountServiceBaseUrl}}/v3/api-docs.yaml", "host": [ "{{accountServiceBaseUrl}}" ], "path": [ "v3", "api-docs.yaml" ] }
+              },
+              "response": []
+            },
+            {
+              "name": "Swagger UI",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{accountServiceBaseUrl}}/swagger-ui.html", "host": [ "{{accountServiceBaseUrl}}" ], "path": [ "swagger-ui.html" ] },
+                "description": "Open in a browser to interactively try requests from the generated docs UI."
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

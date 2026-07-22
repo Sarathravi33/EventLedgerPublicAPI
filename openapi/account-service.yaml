@@ -1,0 +1,189 @@
+openapi: 3.0.1
+info:
+  title: Account Service API
+  description: Internal service owning account balances and transaction history. Not
+    exposed to external clients directly — called only by the Event Gateway. Applies
+    transactions idempotently on eventId and computes balance as an order-independent
+    running total (ΣCREDIT − ΣDEBIT).
+  contact:
+    name: Event Ledger Team
+  version: v1
+servers:
+- url: http://localhost:8081
+  description: Local
+tags:
+- name: Accounts
+  description: Account balances and transaction history (internal — called only by
+    the Event Gateway)
+paths:
+  /accounts/{accountId}/transactions:
+    post:
+      tags:
+      - Accounts
+      summary: Apply a transaction to an account
+      description: "Idempotent on eventId: replaying an already-applied eventId returns\
+        \ the original result unchanged (200) instead of re-applying it. A brand-new\
+        \ eventId is applied and returns 201. The account is created automatically\
+        \ on its first transaction."
+      operationId: applyTransaction
+      parameters:
+      - name: accountId
+        in: path
+        description: Account to credit/debit
+        required: true
+        schema:
+          type: string
+        example: acct-123
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+        required: true
+      responses:
+        "201":
+          description: New transaction applied
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        "400":
+          description: "Validation failed (missing field, non-positive amount, unknown\
+            \ type)"
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        "200":
+          description: Idempotent replay of an already-applied eventId
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+  /accounts/{accountId}:
+    get:
+      tags:
+      - Accounts
+      summary: Get account details and recent transactions
+      description: "Returns the current balance plus the most recent transactions,\
+        \ newest first."
+      operationId: getAccountDetails
+      parameters:
+      - name: accountId
+        in: path
+        description: Account to look up
+        required: true
+        schema:
+          type: string
+        example: acct-123
+      responses:
+        "404":
+          description: Account has never received a transaction
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/AccountDetailsResponse'
+        "200":
+          description: Account details returned
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/AccountDetailsResponse'
+  /accounts/{accountId}/balance:
+    get:
+      tags:
+      - Accounts
+      summary: Get the current balance for an account
+      description: "Balance is ΣCREDIT − ΣDEBIT, computed as an order-independent\
+        \ running total."
+      operationId: getBalance
+      parameters:
+      - name: accountId
+        in: path
+        description: Account to look up
+        required: true
+        schema:
+          type: string
+        example: acct-123
+      responses:
+        "404":
+          description: Account has never received a transaction
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+        "200":
+          description: Balance returned
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+components:
+  schemas:
+    TransactionRequest:
+      required:
+      - amount
+      - eventId
+      - eventTimestamp
+      - type
+      type: object
+      properties:
+        eventId:
+          type: string
+        type:
+          type: string
+          enum:
+          - CREDIT
+          - DEBIT
+        amount:
+          minimum: 0.0
+          exclusiveMinimum: true
+          type: number
+        eventTimestamp:
+          type: string
+          format: date-time
+    TransactionResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        balance:
+          type: number
+        transaction:
+          $ref: '#/components/schemas/TransactionView'
+    TransactionView:
+      type: object
+      properties:
+        eventId:
+          type: string
+        type:
+          type: string
+          enum:
+          - CREDIT
+          - DEBIT
+        amount:
+          type: number
+        eventTimestamp:
+          type: string
+          format: date-time
+        appliedAt:
+          type: string
+          format: date-time
+    AccountDetailsResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        balance:
+          type: number
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransactionView'
+    BalanceResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        balance:
+          type: number

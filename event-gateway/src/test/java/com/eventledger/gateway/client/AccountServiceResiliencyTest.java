@@ -167,6 +167,14 @@ class AccountServiceResiliencyTest {
                 "currency", "USD",
                 "eventTimestamp", Instant.parse("2026-05-15T14:02:11Z").toString());
 
+        // Warm-up call outside the timed window: the first-ever HTTP request into this test's
+        // Spring context pays a one-time DispatcherServlet/HandlerMapping initialization cost
+        // (larger now that springdoc registers additional request mappings) that has nothing to
+        // do with what this assertion is actually checking — that an open circuit fails
+        // immediately with no network call. Without this, the timing bound below flaked at
+        // ~1.1-1.2s on the very first real request in the class. See FIXES.md.
+        restTemplate.getForEntity("/health", String.class);
+
         long start = System.nanoTime();
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                 "/events", HttpMethod.POST, new org.springframework.http.HttpEntity<>(request),

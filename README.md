@@ -43,6 +43,7 @@ share no database and no in-process state — only the REST contract described b
 - Micrometer Tracing + OpenTelemetry bridge for trace propagation
 - Logback + `logstash-logback-encoder` for structured JSON logs
 - Micrometer + Actuator for metrics and health
+- springdoc-openapi for generated Swagger UI / OpenAPI docs
 - JUnit 5, Mockito, AssertJ, WireMock, JaCoCo for testing and coverage
 - Maven (multi-module), Docker / Docker Compose
 
@@ -78,40 +79,92 @@ for the full list):
 | Health endpoint | `/health` on both services | remapped from Actuator's default `/actuator/health` — this remap moves all actuator endpoints to root, so metrics/prometheus lose the `/actuator` prefix too |
 | Metrics endpoint | `/metrics`, `/prometheus` | both services |
 
-## Running with Docker Compose (preferred)
+## How to Run the Application (Step by Step)
 
+Two ways to run it — Docker Compose (recommended, nothing but Docker needed) or Maven directly.
+Either way, when you're done you'll have Account Service on `http://localhost:8081` and Event
+Gateway on `http://localhost:8082`.
+
+### Option A — Docker Compose (recommended)
+
+1. **Prerequisite**: Docker + Docker Compose installed and running.
+2. **From the repository root, build and start both services:**
+   ```bash
+   docker compose up --build
+   ```
+   This builds both Dockerfiles from source (multi-stage: Maven build → slim JRE 21 runtime)
+   and starts both containers. Watch the log output — `event-gateway` is configured to wait for
+   `account-service`'s own Docker healthcheck (`GET /health`) before it starts, so you'll see
+   `account-service` reported `healthy` before `event-gateway` begins starting.
+3. **Wait for both to finish starting** — look for `Started AccountServiceApplication` and
+   `Started EventGatewayApplication` in the log (roughly 10-20 seconds total).
+4. **Verify both are healthy**, in a second terminal:
+   ```bash
+   curl http://localhost:8081/health
+   curl http://localhost:8082/health
+   ```
+   Both should return `{"status":"UP", ...}`.
+5. **Try it** — see [Quick Sanity Check](#quick-sanity-check-either-option) below, or the fuller
+   [API Usage Examples](#api-usage-examples) further down.
+6. **Stop everything** when you're done:
+   ```bash
+   docker compose down
+   ```
+
+### Option B — Run manually with Maven (no Docker)
+
+1. **Prerequisites**: JDK 21, Maven 3.9+.
+2. **From the repository root, build and install both modules once:**
+   ```bash
+   mvn clean install -DskipTests
+   ```
+   This step is required, not optional — `event-gateway` declares a test-scope Maven dependency
+   on `account-service`'s artifact (see [FIXES.md](FIXES.md), Step 6), so Maven needs it
+   resolvable from the local repository before `event-gateway` can be built or run by itself.
+   Skipping this step and jumping straight to step 3 will fail with a dependency-resolution
+   error the first time (or on any machine/checkout that hasn't built this project before).
+3. **Start the Account Service**, in its own terminal:
+   ```bash
+   mvn -pl account-service spring-boot:run
+   ```
+   Wait for `Started AccountServiceApplication` in the log before continuing.
+4. **Start the Event Gateway**, in a second terminal:
+   ```bash
+   mvn -pl event-gateway spring-boot:run
+   ```
+   Wait for `Started EventGatewayApplication` in the log.
+5. **Verify both are healthy**, in a third terminal:
+   ```bash
+   curl http://localhost:8081/health
+   curl http://localhost:8082/health
+   ```
+6. **Try it** — see [Quick Sanity Check](#quick-sanity-check-either-option) below.
+7. **Stop both services** with `Ctrl+C` in each of their terminals when you're done.
+
+Alternative to steps 3-4 — run the packaged jars directly after step 2's install:
 ```bash
-docker compose up --build
-```
-
-This starts `account-service` on `localhost:8081` and `event-gateway` on `localhost:8082`. The
-Gateway waits for the Account Service's healthcheck before starting. Stop with `docker compose
-down`.
-
-## Running Manually (without Docker)
-
-From the repository root, in two separate terminals:
-
-```bash
-# Terminal 1 — Account Service
-mvn -pl account-service spring-boot:run
-
-# Terminal 2 — Event Gateway (after Account Service is up)
-mvn -pl event-gateway spring-boot:run
-```
-
-Or run the packaged jars:
-
-```bash
-mvn -pl account-service package -DskipTests
-mvn -pl event-gateway package -DskipTests
 java -jar account-service/target/account-service-exec.jar
 java -jar event-gateway/target/event-gateway.jar
 ```
-
 (Account Service's executable jar is suffixed `-exec` — its plain jar is kept as the resolvable
-Maven artifact so `event-gateway`'s integration test can depend on it in test scope; see the
-`spring-boot-maven-plugin` config in `account-service/pom.xml`.)
+Maven artifact for the reason in step 2 above; see the `spring-boot-maven-plugin` config in
+`account-service/pom.xml`.)
+
+### Quick Sanity Check (either option)
+
+Once both services report healthy, this exercises the full flow end-to-end:
+
+```bash
+curl -i -X POST http://localhost:8082/events \
+  -H "Content-Type: application/json" \
+  -d '{"eventId":"evt-smoke-1","accountId":"acct-smoke","type":"CREDIT","amount":100.00,"currency":"USD","eventTimestamp":"2026-05-15T14:02:11Z"}'
+
+curl http://localhost:8082/accounts/acct-smoke/balance
+```
+
+Expect `201 Created` on the first call and `{"accountId":"acct-smoke","balance":100.0...}` on
+the second — that's a request flowing through the Gateway, being applied by the Account
+Service, and the balance being read back correctly.
 
 ## API Usage Examples
 
@@ -158,6 +211,36 @@ Health checks:
 curl http://localhost:8082/health
 curl http://localhost:8081/health
 ```
+
+## API Documentation & Testing Tools
+
+**Swagger UI** (interactive, generated from the running code via springdoc-openapi):
+
+```
+http://localhost:8082/swagger-ui.html   # Event Gateway
+http://localhost:8081/swagger-ui.html   # Account Service
+```
+
+The raw OpenAPI spec is available as JSON (`/v3/api-docs`) or YAML (`/v3/api-docs.yaml`) from
+either service while it's running, and a snapshot of each is checked into
+[`openapi/event-gateway.yaml`](openapi/event-gateway.yaml) and
+[`openapi/account-service.yaml`](openapi/account-service.yaml) for offline viewing (Swagger
+Editor, IDE plugins, or import into Postman) without needing either service running.
+
+**Postman collection**: [`Event-Ledger-API.postman_collection.json`](Event-Ledger-API.postman_collection.json)
+covers every endpoint on both services — happy path, idempotency (including a deliberate
+out-of-order example), validation errors, not-found cases, health/metrics/OpenAPI — with a
+Postman test script on the requests that assert behavior, not just show a response. Import it
+directly, or run it headlessly against a running stack:
+
+```bash
+npx newman run Event-Ledger-API.postman_collection.json
+```
+
+Verified end-to-end against real running services: 40 requests, 50 assertions, 0 failures —
+including a second run showing `201 → 200` on the idempotency requests, since re-running the
+collection against an already-populated instance is expected to demonstrate the replay
+behavior rather than fail.
 
 ## Resiliency Pattern & Rationale
 
